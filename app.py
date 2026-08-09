@@ -861,38 +861,3 @@ st.info(
     "Next planned features: CV matching, tailored CV versions, "
     "cover-letter generation, application tracking, and follow-up reminders."
 )
-```
-
----
-
-## بعد اللصق
-
-1. اضغط **Commit changes**.  
-2. انتظر Streamlit يعيد تشغيل التطبيق.  
-3. في Sidebar جرّب:
-
-```text
-Romania location: Timisoara
-Keywords: arabic customer support
-☑ Include Remote jobs (Remotive)
-```
-
-ثم جرّب بحثًا آخر بكلمة واحدة أو كلمتين فقط، مثل:
-
-```text
-operations
-```
-
-أو:
-
-```text
-financial operations
-```
-
-أو:
-
-```text
-customer service
-```
-
-بهذه النسخة لن تحتاج لتعديل أجزاء متفرقة لإضافة Remotive؛ كل شيء موجود في ملف واحد.
