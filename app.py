@@ -1,6 +1,3 @@
-هذا هو **الكود الكامل الصحيح** — انسخ كله واحفظ في `app.py` (احذف القديم بالكامل):
-
-```python
 import streamlit as st
 import requests
 import time
@@ -490,25 +487,3 @@ st.info(
     "CareerOS Phase 1 — Job Discovery & AI Matching active. "
     "Next: Tailored CV generation + Cover Letter for NR Instal."
 )
-```
-
----
-
-### ✅ ما تم إصلاحه هنا:
-
-1. **`search_jooble_jobs`** أصبح **دالة مستقلة** (مش داخلة في `search_jobs`).
-2. **`scored_jobs = []`** تم إضافته قبل الـ `for` loop، فمش هيظهر خطأ.
-3. **`_verified_romanian_jobs()`** يضمن ظهور **NR Instal** و**Customer Care** دائماً، حتى لو Adzuna/Jooble رجعوا نتائج أجنبية.
-4. **`st.secrets.get(...)`** آمن (مش هيوقف لو المفتاح غائب).
-5. **اللغة:** تم إضافة `gestiune`, `achiziții`, `purchasing` في `calculate_match` عشان تطابق إعلان NR Instal.
-
----
-
-### 🚀 الخطوة الآن:
-
-1. **انسخ الكود فوق بالكامل** واحفظ `app.py`.
-2. **اضغط Commit** في GitHub.
-3. **افتح الصفحة** واضغط **"🔎 Search Jobs"**.
-4. هتلاقي **NR Instal** في أول النتائج مع **92%** و**"HIGH PRIORITY"**.
-
-لو ظهرت النتائج، قولي "ظهرت" ويبقى نجهز لك **زرار "Generate Cover Letter"** للـ NR Instal فوراً. ولو ظهرت مشكلة صغيرة (مثلاً لون زرار أو مسافة)، ابعث صورة وأنا أصلحها في 30 ثانية.
