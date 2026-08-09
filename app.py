@@ -2,10 +2,12 @@ import streamlit as st
 import requests
 import time
 import re
+import html
+import unicodedata
 
-# =========================
+# =========================================================
 # PAGE CONFIG
-# =========================
+# =========================================================
 
 st.set_page_config(
     page_title="Careeros AI",
@@ -13,21 +15,28 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🎯 Careeros AI")
-st.subheader("AI-Powered Job Search & Application Assistant")
+# =========================================================
+# API SETTINGS
+# =========================================================
 
-st.write(
-    "Smart job search, matching and application assistance "
-    "for the Romanian and European job market."
-)
+# Jooble is used for Romania / Timișoara jobs.
+# If the secret is missing, Remotive can still work.
+ADZUNA_APP_ID = st.secrets.get("ADZUNA_APP_ID", "")
+ADZUNA_APP_KEY = st.secrets.get("ADZUNA_APP_KEY", "")
 
-# =========================
-# CANDIDATE PROFILE
-# =========================
+try:
+    JOOBLE_API_KEY = st.secrets["JOOBLE_API_KEY"]
+except Exception:
+    JOOBLE_API_KEY = ""
+
+# =========================================================
+# AHMED PROFILE
+# =========================================================
 
 PROFILE = {
     "name": "Ahmed",
     "location": "Timisoara",
+    "country": "Romania",
     "languages": ["Arabic", "English", "Romanian"],
     "romanian_level": "Beginner",
     "education": "Master's Degree in Law",
@@ -37,48 +46,59 @@ PROFILE = {
         "client management",
         "financial compliance",
         "customer service",
-        "Excel",
-        "SAP",
-        "SQL",
+        "customer support",
+        "excel",
+        "sap",
+        "erp",
+        "sql",
         "administration",
         "logistics",
-        "Arabic",
-        "English"
+        "arabic",
+        "english"
     ],
     "target_salary_min": 5000,
     "target_salary_max": 7000
 }
 
-# =========================
-# SIDEBAR
-# =========================
+# =========================================================
+# TEXT HELPERS
+# =========================================================
 
-st.sidebar.header("⚙️ Search Settings")
+def normalize_text(text):
+    """
+    Converts text to lowercase and removes Romanian accents.
+    Example: Timișoara becomes timisoara.
+    """
+    text = str(text or "")
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(
+        character
+        for character in text
+        if not unicodedata.combining(character)
+    )
+    return text.lower()
 
-location = st.sidebar.text_input(
-    "Location",
-    "Timisoara"
-)
 
-keywords = st.sidebar.text_input(
-    "Keywords",
-    "Arabic English Customer Support Operations Logistics Finance"
-)
+def clean_html_text(text):
+    """
+    Removes HTML from job descriptions and makes them readable.
+    """
+    text = html.unescape(str(text or ""))
+    text = re.sub(r"<.*?>", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
-max_results = st.sidebar.slider(
-    "Number of jobs",
-    min_value=5,
-    max_value=50,
-    value=20
-)
 
-# =========================
-# API SETTINGS
-# =========================
+def safe_company_name(company):
+    """
+    Jooble usually gives a company name as text.
+    This also handles unexpected dictionary values safely.
+    """
+    if isinstance(company, dict):
+        return company.get("display_name", "Company not listed")
 
-ADZUNA_APP_ID = st.secrets.get("ADZUNA_APP_ID", "")
-ADZUNA_APP_KEY = st.secrets.get("ADZUNA_APP_KEY", "")
-JOOBLE_API_KEY = st.secrets.get("JOOBLE_API_KEY", "")
+    return str(company or "Company not listed")
+
 
 # =========================
 # ADZUNA SEARCH
@@ -153,20 +173,23 @@ def search_jobs(keywords, location, results_per_page=20):
 
     return None, "Adzuna search failed after several attempts."
 
-
-# =========================
-# JOOBLE SEARCH
-# =========================
+# =========================================================
+# JOOBLE: ROMANIA JOB SEARCH
+# =========================================================
 
 def search_jooble_jobs(keywords, location, results_per_page=20):
     """
-    Search Jooble for jobs in Romania / Timișoara.
-    Normalized to Adzuna-like format.
+    Search Jooble for Romania / Timișoara jobs.
+
+    Results are converted into one common CareerOS format,
+    so Jooble and Remotive jobs can be displayed together.
     """
 
     if not JOOBLE_API_KEY:
-        # Return verified Romanian listings directly if no Jooble key
-        return _verified_romanian_jobs(), "Using verified Romanian listings (Jooble key not set)"
+        return [], (
+            "Jooble API key is missing. "
+            "Add JOOBLE_API_KEY to Streamlit Secrets."
+        )
 
     url = f"https://jooble.org/api/{JOOBLE_API_KEY}"
 
@@ -185,17 +208,26 @@ def search_jooble_jobs(keywords, location, results_per_page=20):
             url,
             json=payload,
             headers=headers,
-            timeout=25
+            timeout=30
         )
 
         if response.status_code == 401:
-            return None, "Jooble rejected the API key (HTTP 401). Check JOOBLE_API_KEY."
+            return [], (
+                "Jooble rejected the API key (HTTP 401). "
+                "Check JOOBLE_API_KEY in Streamlit Secrets."
+            )
 
         if response.status_code == 403:
-            return None, "Jooble denied access (HTTP 403). Check your Jooble API account."
+            return [], (
+                "Jooble denied access (HTTP 403). "
+                "Check your Jooble API account."
+            )
 
         if response.status_code != 200:
-            return None, f"Jooble returned HTTP {response.status_code}."
+            return [], (
+                f"Jooble returned HTTP {response.status_code}. "
+                "Please try again later."
+            )
 
         data = response.json()
         jooble_jobs = data.get("jobs", [])
@@ -203,287 +235,664 @@ def search_jooble_jobs(keywords, location, results_per_page=20):
         normalized_jobs = []
 
         for job in jooble_jobs[:results_per_page]:
+
+            company_name = safe_company_name(
+                job.get("company", "Company not listed")
+            )
+
+            title = job.get("title", "Job title not available")
+            job_location = job.get("location", location)
+            description = job.get("snippet", "")
+            link = job.get("link", "")
+
+            # Jooble sometimes provides salary as text.
+            salary_text = job.get("salary", "")
+
             normalized_jobs.append({
-                "title": job.get("title", "Job title not available"),
+                "title": title,
                 "company": {
-                    "display_name": job.get("company", "Company not listed")
+                    "display_name": company_name
                 },
                 "location": {
-                    "display_name": job.get("location", location)
+                    "display_name": job_location
                 },
-                "description": job.get("snippet", ""),
-                "redirect_url": job.get("link", ""),
+                "description": description,
+                "redirect_url": link,
+                "salary_text": salary_text,
                 "salary_min": None,
                 "salary_max": None,
-                "source": "Jooble Romania"
+                "source": "Jooble Romania",
+                "category": {
+                    "label": ""
+                }
             })
 
-        # If Jooble returned foreign / useless results, inject Romanian verified
-        if len(normalized_jobs) == 0:
-            return _verified_romanian_jobs(), "Jooble empty — showing verified Romanian ads"
-
-        # Add verified Romanian ads to top results so NR Instal always appears
-        verified = _verified_romanian_jobs()
-        # Prepend verified if they aren't already present by title match
-        existing_titles = {j["title"] for j in normalized_jobs}
-        for v in verified:
-            if v["title"] not in existing_titles:
-                normalized_jobs.insert(0, v)
-
-        return normalized_jobs[:results_per_page], "Jooble + Verified Romanian"
+        return normalized_jobs, None
 
     except requests.exceptions.Timeout:
-        return _verified_romanian_jobs(), "Jooble timeout — showing verified Romanian ads"
+        return [], "Jooble request timed out. Please try again."
 
-    except requests.exceptions.RequestException as e:
-        return _verified_romanian_jobs(), f"Jooble connection error — using verified ads ({str(e)[:40]})"
+    except requests.exceptions.RequestException as error:
+        return [], f"Connection error while contacting Jooble: {error}"
 
     except ValueError:
-        return _verified_romanian_jobs(), "Jooble bad response — using verified Romanian ads"
+        return [], "Jooble returned an invalid response."
 
 
-def _verified_romanian_jobs():
-    """Real ads from your screenshots / market (NR Instal, Customer Care, etc)."""
-    return [
-        {
-            "title": "Responsabil Gestiune și Achiziții",
-            "company": {"display_name": "NR Instal Systems SRL"},
-            "location": {"display_name": "Moșnița Nouă, Timiș"},
-            "description": "ERP experience required. Excel, organization, purchasing, inventory, financial docs. Romanian medium helpful. Organized team.",
-            "redirect_url": "#",
-            "salary_min": 4500,
-            "salary_max": 5500,
-            "source": "Verified Romania"
-        },
-        {
-            "title": "Customer Care Analyst (Arabic / English)",
-            "company": {"display_name": "Teleperformance / Timișoara"},
-            "location": {"display_name": "Timișoara"},
-            "description": "Native Arabic + English B2/C1. CRM, client management, operations, Excel. Romanian beginner acceptable.",
-            "redirect_url": "#",
-            "salary_min": 5500,
-            "salary_max": 7000,
-            "source": "Verified Romania"
-        },
-        {
-            "title": "Back Office / Financial Operations",
-            "company": {"display_name": "Local Employer"},
-            "location": {"display_name": "Timișoara"},
-            "description": "Administration, tax docs, invoicing, customer coordination. Arabic / English valuable.",
-            "redirect_url": "#",
-            "salary_min": 4000,
-            "salary_max": 5500,
-            "source": "Verified Romania"
-        }
-    ]
+# =========================================================
+# REMOTIVE: REMOTE JOB SEARCH
+# =========================================================
+
+def search_remotive_jobs(keywords, results_per_page=20):
+    """
+    Search remote jobs from Remotive.
+
+    No API key is required for Remotive.
+    Jobs are filtered locally based on the entered keywords.
+    """
+
+    url = "https://remotive.com/api/remote-jobs"
+
+    headers = {
+        "User-Agent": "Ahmed-CareerOS/1.0",
+        "Accept": "application/json"
+    }
+
+    try:
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=30
+        )
+
+        if response.status_code != 200:
+            return [], (
+                f"Remotive returned HTTP {response.status_code}. "
+                "Please try again later."
+            )
+
+        data = response.json()
+        remotive_jobs = data.get("jobs", [])
+
+        # Extract useful words from the search text.
+        # Example: "arabic customer support"
+        # becomes: ["arabic", "customer", "support"]
+        search_words = [
+            word.lower()
+            for word in re.findall(r"[a-zA-Z]+", keywords)
+            if len(word) >= 3
+        ]
+
+        normalized_jobs = []
+
+        for job in remotive_jobs:
+
+            title = job.get("title", "")
+            company = job.get("company_name", "")
+            description = job.get("description", "")
+            category = job.get("category", "")
+            candidate_location = job.get(
+                "candidate_required_location",
+                "Remote"
+            )
+
+            searchable_text = normalize_text(
+                f"{title} {company} {description} {category}"
+            )
+
+            # Show a job when it matches at least one keyword.
+            # This gives wider results than requiring every word.
+            if search_words:
+                if not any(
+                    word in searchable_text
+                    for word in search_words
+                ):
+                    continue
+
+            normalized_jobs.append({
+                "title": title or "Job title not available",
+                "company": {
+                    "display_name": company or "Company not listed"
+                },
+                "location": {
+                    "display_name": f"Remote — {candidate_location}"
+                },
+                "description": description,
+                "redirect_url": job.get("url", ""),
+                "salary_text": job.get("salary", ""),
+                "salary_min": None,
+                "salary_max": None,
+                "source": "Remotive",
+                "category": {
+                    "label": category
+                }
+            })
+
+            if len(normalized_jobs) >= results_per_page:
+                break
+
+        return normalized_jobs, None
+
+    except requests.exceptions.Timeout:
+        return [], "Remotive request timed out. Please try again."
+
+    except requests.exceptions.RequestException as error:
+        return [], f"Connection error while contacting Remotive: {error}"
+
+    except ValueError:
+        return [], "Remotive returned an invalid response."
 
 
-# =========================
+# =========================================================
+# REMOVE DUPLICATE JOBS
+# =========================================================
+
+def remove_duplicate_jobs(jobs):
+    """
+    Removes duplicate jobs using normalized title + company.
+    """
+
+    unique_jobs = []
+    seen_jobs = set()
+
+    for job in jobs:
+        title = normalize_text(job.get("title", ""))
+        company = normalize_text(
+            job.get("company", {}).get("display_name", "")
+        )
+
+        job_key = f"{title}|{company}"
+
+        if job_key not in seen_jobs:
+            seen_jobs.add(job_key)
+            unique_jobs.append(job)
+
+    return unique_jobs
+
+
+# =========================================================
 # MATCHING ENGINE
-# =========================
+# =========================================================
 
 def calculate_match(job):
+    """
+    Score each job against Ahmed's profile.
+    Returns score, strengths and warnings.
+    """
 
-    text = (
-        str(job.get("title", "")) + " " +
-        str(job.get("description", "")) + " " +
-        str(job.get("category", {}).get("label", "")) + " " +
-        str(job.get("company", {}).get("display_name", ""))
-    ).lower()
+    title = job.get("title", "")
+    description = job.get("description", "")
+    company = job.get("company", {}).get("display_name", "")
+    category = job.get("category", {}).get("label", "")
+
+    text = normalize_text(
+        f"{title} {description} {company} {category}"
+    )
+
+    location_text = normalize_text(
+        job.get("location", {}).get("display_name", "")
+    )
 
     score = 0
     reasons = []
+    warnings = []
 
-    # Languages
-    if "arabic" in text:
-        score += 20
-        reasons.append("Arabic language match")
+    # Arabic is a high-value differentiator for Ahmed.
+    if "arabic" in text or "araba" in text:
+        score += 30
+        reasons.append("Arabic language is explicitly relevant")
 
-    if "english" in text:
+    # English.
+    if "english" in text or "engleza" in text:
         score += 15
-        reasons.append("English language match")
+        reasons.append("English language is relevant")
 
-    # Operations / Customer Service
+    # Operations / customer support.
     operations_words = [
-        "operations", "operational", "coordinator",
-        "administrator", "back office", "customer support",
-        "customer service", "care", "client"
+        "operations",
+        "operational",
+        "coordinator",
+        "administrator",
+        "back office",
+        "customer support",
+        "customer service",
+        "customer care",
+        "client service",
+        "client support",
+        "client management",
+        "call center"
     ]
+
     if any(word in text for word in operations_words):
         score += 15
-        reasons.append("Operations / customer-service experience")
+        reasons.append("Operations / customer-service relevance")
 
-    # Finance / Administration
+    # Financial / legal / compliance experience.
     finance_words = [
-        "finance", "financial", "accounting", "tax",
-        "compliance", "procurement", "invoice", "gestiune",
-        "achiziții", "achizitii", "purchasing"
+        "finance",
+        "financial",
+        "accounting",
+        "accounts payable",
+        "accounts receivable",
+        "tax",
+        "compliance",
+        "invoice",
+        "procurement",
+        "legal",
+        "audit",
+        "banking",
+        "collection"
     ]
-    if any(word in text for word in finance_words):
-        score += 10
-        reasons.append("Finance / compliance / purchasing background")
 
-    # Logistics / Warehouse
+    if any(word in text for word in finance_words):
+        score += 15
+        reasons.append("Finance / compliance / legal relevance")
+
+    # Logistics / warehouse.
     logistics_words = [
-        "logistics", "warehouse", "depot", "supply chain",
-        "inventory", "store", "magazin"
+        "logistics",
+        "warehouse",
+        "depot",
+        "supply chain",
+        "inventory",
+        "transport",
+        "purchasing"
     ]
+
     if any(word in text for word in logistics_words):
         score += 10
         reasons.append("Logistics / warehouse relevance")
 
-    # SAP / Excel / Tools
+    # Software skills.
     if "sap" in text:
         score += 10
         reasons.append("SAP relevance")
+
+    if "erp" in text:
+        score += 8
+        reasons.append("ERP relevance")
 
     if "excel" in text:
         score += 5
         reasons.append("Excel relevance")
 
-    # Romanian / Location
-    location_text = str(
-        job.get("location", {})
-        .get("display_name", "")
-    ).lower()
+    # Location preference.
+    if "timisoara" in location_text:
+        score += 15
+        reasons.append("Timișoara location")
 
-    if "timisoara" in location_text or "timiș" in location_text or "mosnita" in location_text:
+    elif "remote" in location_text:
         score += 10
-        reasons.append("Timișoara / Moșnița location")
+        reasons.append("Remote opportunity")
 
-    # Salary check
-    salary_min = job.get("salary_min")
-    salary_max = job.get("salary_max")
+    # Romanian language warning.
+    romanian_requirement_words = [
+        "romanian fluent",
+        "fluent romanian",
+        "romanian language required",
+        "romanian required",
+        "limba romana",
+        "romana avansat",
+        "romanian c1",
+        "romanian b2"
+    ]
 
-    try:
-        if salary_max and int(salary_max) >= PROFILE["target_salary_min"]:
-            score += 5
-            reasons.append("Salary fits target")
-    except (ValueError, TypeError):
-        pass
+    if any(word in text for word in romanian_requirement_words):
+        score -= 10
+        warnings.append(
+            "Romanian may be required at a higher level than Beginner"
+        )
 
-    score = min(score, 100)
-    return score, reasons
+    # Remote eligibility warning.
+    remote_location_words = [
+        "united states",
+        "usa only",
+        "canada only",
+        "uk only",
+        "india only"
+    ]
+
+    if (
+        "remote" in location_text
+        and any(word in location_text for word in remote_location_words)
+    ):
+        score -= 10
+        warnings.append(
+            "Check if this remote job accepts applicants living in Romania"
+        )
+
+    score = max(0, min(score, 100))
+
+    return score, reasons, warnings
 
 
-# =========================
-# SEARCH BUTTON + DASHBOARD
-# =========================
+# =========================================================
+# PAGE HEADER
+# =========================================================
+
+st.title("🎯 Careeros AI")
+st.subheader("AI-Powered Job Search & Application Assistant")
+
+st.write(
+    "Search Romanian and remote jobs, rank them against Ahmed's "
+    "profile, and prepare high-quality applications."
+)
+
+# =========================================================
+# SIDEBAR SETTINGS
+# =========================================================
+
+st.sidebar.header("⚙️ Search Settings")
+
+location = st.sidebar.text_input(
+    "Romania location",
+    "Timisoara"
+)
+
+keywords = st.sidebar.text_input(
+    "Keywords",
+    "customer support"
+)
+
+max_results = st.sidebar.slider(
+    "Number of results per source",
+    min_value=5,
+    max_value=50,
+    value=20
+)
+
+search_remote = st.sidebar.checkbox(
+    "Include Remote jobs (Remotive)",
+    value=True
+)
+
+st.sidebar.divider()
+
+st.sidebar.markdown("### 💡 Suggested searches")
+
+st.sidebar.caption(
+    """
+Try one search at a time:
+
+• arabic customer support  
+• customer service english  
+• operations specialist  
+• back office  
+• financial operations  
+• accounts receivable  
+• logistics coordinator  
+• sap excel  
+"""
+)
+
+# =========================================================
+# SEARCH BUTTON
+# =========================================================
 
 st.divider()
 
 if st.button("🔎 Search Jobs", type="primary"):
 
-    with st.spinner("Searching real job listings in Romania..."):
+    all_jobs = []
+    search_errors = []
 
-        # Try Jooble + Verified fallback automatically
-        jobs, source_msg = search_jooble_jobs(
+    with st.spinner(
+        "Searching Romania and Remote job listings..."
+    ):
+
+        # -------------------------
+        # Jooble: Romania search
+        # -------------------------
+
+        jooble_jobs, jooble_error = search_jooble_jobs(
             keywords,
             location,
             max_results
         )
 
-    if not jobs:
+        if jooble_error:
+            search_errors.append(f"Jooble: {jooble_error}")
+
+        elif jooble_jobs:
+            all_jobs.extend(jooble_jobs)
+
+        # -------------------------
+        # Remotive: Remote search
+        # -------------------------
+
+        if search_remote:
+
+            remotive_jobs, remotive_error = search_remotive_jobs(
+                keywords,
+                max_results
+            )
+
+            if remotive_error:
+                search_errors.append(
+                    f"Remotive: {remotive_error}"
+                )
+
+            elif remotive_jobs:
+                all_jobs.extend(remotive_jobs)
+
+    # Do not stop if only one source has an error.
+    for error_message in search_errors:
+        st.warning(error_message)
+
+    # Remove repeated advertisements.
+    all_jobs = remove_duplicate_jobs(all_jobs)
+
+    if not all_jobs:
+
         st.warning(
-            "No jobs found. Try broader keywords or another location."
+            "No jobs were found from the active sources. "
+            "Try simpler keywords: customer support, operations, "
+            "finance, logistics, Arabic, or English."
         )
 
     else:
-        if source_msg:
-            st.info(source_msg)
 
-        st.success(f"Found {len(jobs)} job listings for Ahmed!")
-
-        # Initialize scoring list
         scored_jobs = []
 
-        for job in jobs:
-            score, reasons = calculate_match(job)
+        for job in all_jobs:
+
+            score, reasons, warnings = calculate_match(job)
+
             job["_score"] = score
             job["_reasons"] = reasons
+            job["_warnings"] = warnings
+
             scored_jobs.append(job)
 
-        # Sort by match score (high to low)
-        scored_jobs.sort(key=lambda x: x["_score"], reverse=True)
+        # Highest match first.
+        scored_jobs.sort(
+            key=lambda job: job["_score"],
+            reverse=True
+        )
 
-        # Metrics
-        best_score = scored_jobs[0]["_score"] if scored_jobs else 0
+        best_score = scored_jobs[0]["_score"]
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Jobs Found", len(scored_jobs))
-        with col2:
-            st.metric("Best Match", f"{best_score}%")
-        with col3:
-            st.metric("Applications", "0")
+        high_priority_count = len([
+            job
+            for job in scored_jobs
+            if job["_score"] >= 70
+        ])
+
+        st.success(
+            f"Found {len(scored_jobs)} unique jobs from active sources."
+        )
+
+        # =================================================
+        # DASHBOARD METRICS
+        # =================================================
+
+        metric_1, metric_2, metric_3, metric_4 = st.columns(4)
+
+        metric_1.metric("Jobs Found", len(scored_jobs))
+        metric_2.metric("Best Match", f"{best_score}%")
+        metric_3.metric("High Priority", high_priority_count)
+        metric_4.metric("Applications", "0")
 
         st.divider()
         st.header("🎯 Recommended Jobs")
 
+        # =================================================
+        # DISPLAY JOBS
+        # =================================================
+
         for index, job in enumerate(scored_jobs):
 
             title = job.get("title", "Unknown position")
-            company = job.get("company", {}).get("display_name", "Unknown company")
-            job_location = job.get("location", {}).get("display_name", "Unknown location")
 
-            salary_min = job.get("salary_min")
-            salary_max = job.get("salary_max")
+            company = job.get(
+                "company",
+                {}
+            ).get(
+                "display_name",
+                "Unknown company"
+            )
 
-            if salary_min is not None or salary_max is not None:
-                salary_text = f"{salary_min or '?'} - {salary_max or '?'} RON"
-            else:
-                salary_text = "Salary not specified"
+            job_location = job.get(
+                "location",
+                {}
+            ).get(
+                "display_name",
+                "Unknown location"
+            )
 
+            source = job.get("source", "Unknown source")
             score = job["_score"]
+            reasons = job["_reasons"]
+            warnings = job["_warnings"]
+
+            description = clean_html_text(
+                job.get("description", "")
+            )
+
+            salary_text = job.get("salary_text", "")
+            link = job.get("redirect_url", "")
+
+            if score >= 70:
+                priority = "🔥 HIGH PRIORITY"
+            elif score >= 45:
+                priority = "🟡 POSSIBLE MATCH"
+            else:
+                priority = "⚪ LOW PRIORITY"
 
             with st.container(border=True):
 
                 st.subheader(f"{index + 1}. {title}")
 
+                st.write(
+                    f"**{priority} — Match Score: {score}%**"
+                )
+
+                st.progress(score / 100)
+
                 st.write(f"🏢 **Company:** {company}")
                 st.write(f"📍 **Location:** {job_location}")
-                st.write(f"💰 **Salary:** {salary_text}")
-                st.write(f"🎯 **Match Score:** {score}%")
+                st.write(f"🌐 **Source:** {source}")
 
-                # Highlight NR Instal specifically
-                if "NR Instal" in company:
-                    st.success("🔥 **HIGH PRIORITY — NR Instal:** Send tailored CV now!")
-
-                if job["_reasons"]:
-                    st.write("**Why it matches:**")
-                    for reason in job["_reasons"]:
-                        st.write(f"• {reason}")
-
-                description = job.get("description", "")
-                if description:
-                    clean_description = re.sub("<.*?>", " ", description)
-                    snippet = clean_description[:600].strip()
-                    if snippet:
-                        st.write(snippet + ("..." if len(clean_description) > 600 else ""))
-
-                link = job.get("redirect_url", "")
-                if link and link != "#":
-                    st.link_button("📩 View & Apply", link)
+                if salary_text:
+                    st.write(f"💰 **Salary listed:** {salary_text}")
                 else:
-                    st.info("📧 Apply via WhatsApp / Email using generated cover letter (next step).")
+                    st.write("💰 **Salary:** Not specified")
 
-# =========================
-# PROFILE
-# =========================
+                if reasons:
+
+                    st.write("**Why this may match your profile:**")
+
+                    for reason in reasons:
+                        st.success(f"✓ {reason}")
+
+                if warnings:
+
+                    st.write("**Check before applying:**")
+
+                    for warning in warnings:
+                        st.warning(f"⚠ {warning}")
+
+                if description:
+
+                    st.write("**Job description preview:**")
+                    st.write(description[:700])
+
+                if link:
+
+                    st.link_button(
+                        "📩 View Original Job & Apply",
+                        link
+                    )
+
+# =========================================================
+# PROFILE SECTION
+# =========================================================
 
 st.divider()
+
 st.header("🎯 Your Job Search Profile")
 
 st.write(f"**Candidate:** {PROFILE['name']}")
-st.write(f"📍 **Location:** {PROFILE['location']}, Romania")
-st.write("🗣️ **Languages:** Arabic / English / Romanian (beginner)")
-st.write(f"🎓 **Education:** {PROFILE['education']}")
-st.write(f"💼 **Experience:** {PROFILE['experience_years']}+ years")
+
 st.write(
-    f"💰 **Target Salary:** {PROFILE['target_salary_min']:,} - {PROFILE['target_salary_max']:,} RON"
+    f"📍 **Location:** {PROFILE['location']}, "
+    f"{PROFILE['country']}"
+)
+
+st.write(
+    "🗣️ **Languages:** Arabic / English / Romanian (Beginner)"
+)
+
+st.write(
+    f"🎓 **Education:** {PROFILE['education']}"
+)
+
+st.write(
+    f"💼 **Experience:** {PROFILE['experience_years']}+ years"
+)
+
+st.write(
+    f"💰 **Target Salary:** "
+    f"{PROFILE['target_salary_min']:,} – "
+    f"{PROFILE['target_salary_max']:,} RON"
 )
 
 st.info(
-    "CareerOS Phase 1 — Job Discovery & AI Matching active. "
-    "Next: Tailored CV generation + Cover Letter for NR Instal."
+    "Next planned features: CV matching, tailored CV versions, "
+    "cover-letter generation, application tracking, and follow-up reminders."
 )
+```
+
+---
+
+## بعد اللصق
+
+1. اضغط **Commit changes**.  
+2. انتظر Streamlit يعيد تشغيل التطبيق.  
+3. في Sidebar جرّب:
+
+```text
+Romania location: Timisoara
+Keywords: arabic customer support
+☑ Include Remote jobs (Remotive)
+```
+
+ثم جرّب بحثًا آخر بكلمة واحدة أو كلمتين فقط، مثل:
+
+```text
+operations
+```
+
+أو:
+
+```text
+financial operations
+```
+
+أو:
+
+```text
+customer service
+```
+
+بهذه النسخة لن تحتاج لتعديل أجزاء متفرقة لإضافة Remotive؛ كل شيء موجود في ملف واحد.
