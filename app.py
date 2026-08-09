@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+import time
 import re
 
 # =========================
@@ -85,12 +86,9 @@ ADZUNA_APP_KEY = st.secrets["ADZUNA_APP_KEY"]
 def search_jobs(keywords, location, results_per_page=20):
 
     if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
-        return None, "Adzuna API credentials are missing."
+        return None, "Adzuna API credentials are missing. Check Streamlit Secrets."
 
-    url = (
-        "https://api.adzuna.com/v1/api/"
-        "jobs/ro/search/1"
-    )
+    url = "https://api.adzuna.com/v1/api/jobs/ro/search/1"
 
     params = {
         "app_id": ADZUNA_APP_ID,
@@ -102,25 +100,61 @@ def search_jobs(keywords, location, results_per_page=20):
         "sort_by": "date"
     }
 
-    try:
-        response = requests.get(
-            url,
-            params=params,
-            timeout=15
-        )
+    headers = {
+        "User-Agent": "Ahmed-CareerOS/1.0",
+        "Accept": "application/json"
+    }
 
-        if response.status_code != 200:
-            return None, (
-                f"Adzuna returned HTTP "
-                f"{response.status_code}: {response.text}"
+    # Retry three times because Adzuna can temporarily return HTTP 503.
+    for attempt in range(3):
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                headers=headers,
+                timeout=25
             )
 
-        data = response.json()
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("results", []), None
 
-        return data.get("results", []), None
+            if response.status_code == 401:
+                return None, (
+                    "Adzuna rejected the App ID/API Key (HTTP 401). "
+                    "Check ADZUNA_APP_ID and ADZUNA_APP_KEY in Streamlit Secrets."
+                )
 
-    except requests.exceptions.RequestException as e:
-        return None, f"Connection error: {e}"
+            if response.status_code == 403:
+                return None, (
+                    "Adzuna denied access (HTTP 403). "
+                    "Check that the API account/key is active."
+                )
+
+            if response.status_code == 503:
+                # Do not show Adzuna's full HTML error page.
+                if attempt < 2:
+                    time.sleep(3 * (attempt + 1))
+                    continue
+
+                return None, (
+                    "Adzuna is temporarily unavailable (HTTP 503). "
+                    "Please wait a few minutes and try Search Jobs again."
+                )
+
+            return None, f"Adzuna returned HTTP {response.status_code}."
+
+        except requests.exceptions.Timeout:
+            if attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                continue
+
+            return None, "The request to Adzuna timed out. Please try again."
+
+        except requests.exceptions.RequestException as e:
+            return None, f"Connection error while contacting Adzuna: {e}"
+
+    return None, "Adzuna search failed after several attempts."
 
 # =========================
 # MATCHING ENGINE
