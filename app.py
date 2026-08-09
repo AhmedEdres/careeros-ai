@@ -23,11 +23,7 @@ st.set_page_config(
 # If the secret is missing, Remotive can still work.
 ADZUNA_APP_ID = st.secrets.get("ADZUNA_APP_ID", "")
 ADZUNA_APP_KEY = st.secrets.get("ADZUNA_APP_KEY", "")
-
-try:
-    JOOBLE_API_KEY = st.secrets["JOOBLE_API_KEY"]
-except Exception:
-    JOOBLE_API_KEY = ""
+JOOBLE_API_KEY = st.secrets["JOOBLE_API_KEY"]
 
 # =========================================================
 # AHMED PROFILE
