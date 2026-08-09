@@ -19,12 +19,9 @@ st.set_page_config(
 # API SETTINGS
 # =========================================================
 
-# Jooble is used for Romania / Timișoara jobs.
-# If the secret is missing, Remotive can still work.
 ADZUNA_APP_ID = st.secrets.get("ADZUNA_APP_ID", "")
 ADZUNA_APP_KEY = st.secrets.get("ADZUNA_APP_KEY", "")
-JOOBLE_API_KEY = st.secrets["JOOBLE_API_KEY"]
-
+JOOBLE_API_KEY = st.secrets.get("JOOBLE_API_KEY", "")
 # =========================================================
 # AHMED PROFILE
 # =========================================================
