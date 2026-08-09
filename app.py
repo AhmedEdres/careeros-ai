@@ -75,8 +75,8 @@ max_results = st.sidebar.slider(
 # API SETTINGS
 # =========================
 
-    ADZUNA_APP_ID = st.secrets["ADZUNA_APP_ID"]
-    ADZUNA_APP_KEY = st.secrets["ADZUNA_APP_KEY"]
+ADZUNA_APP_ID = st.secrets["ADZUNA_APP_ID"]
+ADZUNA_APP_KEY = st.secrets["ADZUNA_APP_KEY"]
 
 # =========================
 # JOB SEARCH FUNCTION
