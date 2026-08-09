@@ -94,7 +94,7 @@ def search_jobs(keywords, location, results_per_page=20):
         "app_id": ADZUNA_APP_ID,
         "app_key": ADZUNA_APP_KEY,
         "results_per_page": results_per_page,
-        "what": customer service,
+        "what": keywords,
         "where": "Warsaw",
         "content-type": "application/json",
         "sort_by": "date"
