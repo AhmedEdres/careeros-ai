@@ -88,14 +88,14 @@ def search_jobs(keywords, location, results_per_page=20):
     if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
         return None, "Adzuna API credentials are missing. Check Streamlit Secrets."
 
-    url = "https://api.adzuna.com/v1/api/jobs/ro/search/1"
+    url = "https://api.adzuna.com/v1/api/jobs/pl/search/1"
 
     params = {
         "app_id": ADZUNA_APP_ID,
         "app_key": ADZUNA_APP_KEY,
         "results_per_page": results_per_page,
         "what": keywords,
-        "where": location,
+        "where": "Warsaw",
         "content-type": "application/json",
         "sort_by": "date"
     }
