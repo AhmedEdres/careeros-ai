@@ -163,7 +163,7 @@ def search_jobs(keywords, location, results_per_page=20):
 
     The returned jobs are normalized so the rest of CareerOS
     can display them in the same format as Adzuna jobs.
-    """
+   
 
     if not JOOBLE_API_KEY:
         return None, "Jooble API key is missing. Check Streamlit Secrets."
