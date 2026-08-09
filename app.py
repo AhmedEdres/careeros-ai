@@ -94,7 +94,7 @@ def search_jobs(keywords, location, results_per_page=20):
         "app_id": ADZUNA_APP_ID,
         "app_key": ADZUNA_APP_KEY,
         "results_per_page": results_per_page,
-        "what": keywords,
+        "what": customer service,
         "where": "Warsaw",
         "content-type": "application/json",
         "sort_by": "date"
@@ -263,12 +263,12 @@ st.divider()
 
 if st.button("🔎 Search Jobs", type="primary"):
 
-    with st.spinner("Searching real job listings..."):
+    with st.spinner("Testing Adzuna job listings in Warsaw..."):
 
         jobs, error = search_jobs(
-            keywords,
-            location,
-            max_results
+            "customer service",
+            "Warsaw",
+            20
         )
 
     if error:
@@ -287,7 +287,6 @@ if st.button("🔎 Search Jobs", type="primary"):
             "No jobs found for this search. "
             "Try broader keywords or another location."
         )
-
     else:
 
         # Calculate matches
