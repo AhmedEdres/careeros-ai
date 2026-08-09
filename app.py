@@ -78,6 +78,7 @@ max_results = st.sidebar.slider(
 
 ADZUNA_APP_ID = st.secrets["ADZUNA_APP_ID"]
 ADZUNA_APP_KEY = st.secrets["ADZUNA_APP_KEY"]
+JOOBLE_API_KEY = st.secrets["JOOBLE_API_KEY"]
 
 # =========================
 # JOB SEARCH FUNCTION
@@ -155,6 +156,79 @@ def search_jobs(keywords, location, results_per_page=20):
             return None, f"Connection error while contacting Adzuna: {e}"
 
     return None, "Adzuna search failed after several attempts."
+    
+    def search_jooble_jobs(keywords, location, results_per_page=20):
+    """
+    Search Jooble for jobs in Romania / Timișoara.
+
+    The returned jobs are normalized so the rest of CareerOS
+    can display them in the same format as Adzuna jobs.
+    """
+
+    if not JOOBLE_API_KEY:
+        return None, "Jooble API key is missing. Check Streamlit Secrets."
+
+    url = f"https://jooble.org/api/{JOOBLE_API_KEY}"
+
+    payload = {
+        "keywords": keywords,
+        "location": location
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Ahmed-CareerOS/1.0"
+    }
+
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=25
+        )
+
+        if response.status_code == 401:
+            return None, "Jooble rejected the API key (HTTP 401). Check JOOBLE_API_KEY."
+
+        if response.status_code == 403:
+            return None, "Jooble denied access (HTTP 403). Check your Jooble API account."
+
+        if response.status_code != 200:
+            return None, f"Jooble returned HTTP {response.status_code}."
+
+        data = response.json()
+        jooble_jobs = data.get("jobs", [])
+
+        # Convert Jooble data into CareerOS / Adzuna-like format.
+        normalized_jobs = []
+
+        for job in jooble_jobs[:results_per_page]:
+            normalized_jobs.append({
+                "title": job.get("title", "Job title not available"),
+                "company": {
+                    "display_name": job.get("company", "Company not listed")
+                },
+                "location": {
+                    "display_name": job.get("location", location)
+                },
+                "description": job.get("snippet", ""),
+                "redirect_url": job.get("link", ""),
+                "salary_min": None,
+                "salary_max": None,
+                "source": "Jooble Romania"
+            })
+
+        return normalized_jobs, None
+
+    except requests.exceptions.Timeout:
+        return None, "Jooble request timed out. Please try again."
+
+    except requests.exceptions.RequestException as e:
+        return None, f"Connection error while contacting Jooble: {e}"
+
+    except ValueError:
+        return None, "Jooble returned an invalid response."
 
 # =========================
 # MATCHING ENGINE
@@ -263,35 +337,25 @@ st.divider()
 
 if st.button("🔎 Search Jobs", type="primary"):
 
-    with st.spinner("Testing Adzuna job listings in Warsaw..."):
+    with st.spinner("Searching real job listings in Romania..."):
 
-         jobs, error = search_jobs(
+        jobs, error = search_jooble_jobs(
             keywords,
             location,
             max_results
         )
 
     if error:
-
         st.error(error)
 
-        if "credentials" in error.lower():
-            st.info(
-                "You need to add ADZUNA_APP_ID and "
-                "ADZUNA_APP_KEY to Streamlit Secrets."
-            )
-
     elif not jobs:
-
         st.warning(
             "No jobs found for this search. "
             "Try broader keywords or another location."
         )
+
     else:
-
-        # Calculate matches
-        scored_jobs = []
-
+        st.success(f"Found {len(jobs)} jobs from Jooble.")
         for job in jobs:
 
             score, reasons = calculate_match(job)
