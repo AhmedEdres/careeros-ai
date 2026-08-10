@@ -556,6 +556,174 @@ def search_adzuna_jobs(
 
 
 # =========================================================
+# ARBEITNOW — FREE EU JOBS API (no key needed)
+# =========================================================
+@st.cache_data(ttl=1800, show_spinner=False)
+def search_arbeitnow_jobs(
+    keywords: str,
+    results_per_page: int = 20,
+    _refresh: int = 0,
+) -> Tuple[List[Dict], Optional[str]]:
+    """
+    Arbeitnow public API — European jobs from ATS systems
+    (Greenhouse, SmartRecruiters, Join.com, TeamTailor, Recruitee, Comeet).
+    Completely free, no API key required.
+    """
+    url = "https://www.arbeitnow.com/api/job-board-api"
+    headers = {
+        "User-Agent": "Ahmed-CareerOS/2.0",
+        "Accept": "application/json",
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+
+        if response.status_code != 200:
+            return [], f"Arbeitnow returned HTTP {response.status_code}."
+
+        data = response.json()
+        all_jobs = data.get("data", [])
+
+        if not isinstance(all_jobs, list):
+            return [], "Arbeitnow returned unexpected format."
+
+        search_words = [
+            word.lower()
+            for word in re.findall(r"[a-zA-Z]+", keywords)
+            if len(word) >= 3
+        ]
+
+        normalized_jobs: List[Dict] = []
+
+        for job in all_jobs:
+            if not isinstance(job, dict):
+                continue
+
+            title = job.get("title", "")
+            company = job.get("company_name", "")
+            description = job.get("description", "")
+            location_str = job.get("location", "")
+            tags = " ".join(job.get("tags", []))
+            is_remote = job.get("remote", False)
+
+            searchable = normalize_text(
+                f"{title} {company} {description} {location_str} {tags}"
+            )
+
+            # Filter by search words
+            if search_words and not any(w in searchable for w in search_words):
+                continue
+
+            # Build location display
+            loc_display = location_str or ""
+            if is_remote:
+                loc_display = f"Remote — {loc_display}" if loc_display else "Remote"
+
+            normalized_jobs.append({
+                "title": title or "Job title not available",
+                "company": {"display_name": company or "Company not listed"},
+                "location": {"display_name": loc_display},
+                "description": description,
+                "redirect_url": job.get("url", ""),
+                "salary_text": "",
+                "salary_min": None,
+                "salary_max": None,
+                "source": "Arbeitnow",
+                "category": {"label": ", ".join(job.get("tags", [])[:3])},
+            })
+
+            if len(normalized_jobs) >= results_per_page:
+                break
+
+        return normalized_jobs, None
+
+    except requests.exceptions.Timeout:
+        return [], "Arbeitnow request timed out."
+    except requests.exceptions.RequestException as error:
+        return [], f"Arbeitnow connection error: {error}"
+    except ValueError:
+        return [], "Arbeitnow returned invalid JSON."
+
+
+# =========================================================
+# CAREERJET — FREE EU JOB SEARCH (no key needed)
+# =========================================================
+@st.cache_data(ttl=1800, show_spinner=False)
+def search_careerjet_jobs(
+    keywords: str,
+    location: str,
+    results_per_page: int = 20,
+    _refresh: int = 0,
+) -> Tuple[List[Dict], Optional[str]]:
+    """
+    Careerjet JSON feed — international job search engine.
+    Free, no API key needed. Supports Romanian locale.
+    """
+    base_url = "http://public.api.careerjet.net/search"
+    search_location = normalize_location(location)
+
+    params = {
+        "keywords": keywords.strip(),
+        "location": search_location,
+        "locale_code": "en_RO",  # English jobs in Romania
+        "pagesize": str(results_per_page),
+        "page": "1",
+        "sort": "date",
+        "affid": "678bdee048",  # Public affiliate ID
+    }
+    headers = {
+        "User-Agent": "Ahmed-CareerOS/2.0",
+        "Accept": "application/json",
+    }
+
+    try:
+        response = requests.get(
+            base_url, params=params, headers=headers, timeout=25
+        )
+
+        if response.status_code != 200:
+            return [], f"Careerjet returned HTTP {response.status_code}."
+
+        data = response.json()
+        jobs = data.get("jobs", [])
+
+        if not isinstance(jobs, list):
+            return [], "Careerjet returned unexpected format."
+
+        normalized_jobs: List[Dict] = []
+
+        for job in jobs[:results_per_page]:
+            if not isinstance(job, dict):
+                continue
+
+            salary = job.get("salary", "")
+
+            normalized_jobs.append({
+                "title": job.get("title", "Job title not available"),
+                "company": {"display_name": job.get("company", "Company not listed")},
+                "location": {
+                    "display_name": job.get("locations", search_location)
+                },
+                "description": job.get("description", ""),
+                "redirect_url": job.get("url", ""),
+                "salary_text": salary if salary else "",
+                "salary_min": None,
+                "salary_max": None,
+                "source": "Careerjet",
+                "category": {"label": ""},
+            })
+
+        return normalized_jobs, None
+
+    except requests.exceptions.Timeout:
+        return [], "Careerjet request timed out."
+    except requests.exceptions.RequestException as error:
+        return [], f"Careerjet connection error: {error}"
+    except ValueError:
+        return [], "Careerjet returned invalid JSON."
+
+
+# =========================================================
 # DEDUPLICATION — Hash-based O(n) instead of O(n²)
 # =========================================================
 def remove_duplicate_jobs(jobs: List[Dict]) -> List[Dict]:
@@ -886,6 +1054,8 @@ def run_parallel_search(
     use_jooble: bool,
     use_remotive: bool,
     use_adzuna: bool,
+    use_arbeitnow: bool,
+    use_careerjet: bool,
     expand_queries: bool,
     refresh_count: int,
 ) -> Tuple[List[Dict], List[str], List[str]]:
@@ -910,6 +1080,19 @@ def run_parallel_search(
         if use_adzuna:
             tasks.append((
                 "Adzuna", search_adzuna_jobs,
+                {"keywords": query, "location": location,
+                 "results_per_page": max_results,
+                 "_refresh": refresh_count}
+            ))
+        if use_arbeitnow:
+            tasks.append((
+                "Arbeitnow", search_arbeitnow_jobs,
+                {"keywords": query, "results_per_page": max_results,
+                 "_refresh": refresh_count}
+            ))
+        if use_careerjet:
+            tasks.append((
+                "Careerjet", search_careerjet_jobs,
                 {"keywords": query, "location": location,
                  "results_per_page": max_results,
                  "_refresh": refresh_count}
@@ -1016,6 +1199,14 @@ with st.sidebar:
     st.subheader("🔗 Sources")
     search_jooble = st.checkbox("🇷🇴 Jooble — Romania", value=True)
     search_remote = st.checkbox("🌍 Remotive — Remote", value=True)
+    search_arbeitnow = st.checkbox(
+        "🇪🇺 Arbeitnow — EU Jobs", value=True,
+        help="Free EU job board — Greenhouse, SmartRecruiters, etc. No key needed",
+    )
+    search_careerjet = st.checkbox(
+        "🔍 Careerjet — Romania & EU", value=True,
+        help="International job search engine with Romanian locale. Free, no key needed",
+    )
     search_adzuna = st.checkbox("🌐 Adzuna — International", value=False)
 
     st.divider()
@@ -1081,8 +1272,10 @@ with st.sidebar:
     st.divider()
     st.subheader("🔐 API status")
     st.write(f"Jooble: {'✅' if JOOBLE_API_KEY else '❌ missing'}")
+    st.write("Remotive: ✅ free")
+    st.write("Arbeitnow: ✅ free")
+    st.write("Careerjet: ✅ free")
     st.write(f"Adzuna: {'✅' if ADZUNA_APP_ID and ADZUNA_APP_KEY else '⚪ not set'}")
-    st.write("Remotive: ✅ no key needed")
     st.write(f"Claude: {'✅' if CLAUDE_API_KEY else '⚪ optional'}")
 
     st.divider()
@@ -1121,6 +1314,8 @@ if search_clicked:
             use_jooble=search_jooble,
             use_remotive=search_remote,
             use_adzuna=search_adzuna,
+            use_arbeitnow=search_arbeitnow,
+            use_careerjet=search_careerjet,
             expand_queries=expand_queries,
             refresh_count=st.session_state.search_count,
         )
