@@ -646,7 +646,7 @@ def search_arbeitnow_jobs(
 
 
 # =========================================================
-# CAREERJET — FREE EU JOB SEARCH (no key needed)
+# CAREERJET — JOB SEARCH ENGINE (free partner registration)
 # =========================================================
 @st.cache_data(ttl=1800, show_spinner=False)
 def search_careerjet_jobs(
@@ -656,20 +656,32 @@ def search_careerjet_jobs(
     _refresh: int = 0,
 ) -> Tuple[List[Dict], Optional[str]]:
     """
-    Careerjet JSON feed — international job search engine.
-    Free, no API key needed. Supports Romanian locale.
+    Careerjet v4 API — international job search engine.
+    Free, but requires a partner affiliate ID.
+    Register free at: https://www.careerjet.com/partners/
+    Add CAREERJET_AFFID to Streamlit Secrets.
     """
-    base_url = "http://public.api.careerjet.net/search"
+    CAREERJET_AFFID = st.secrets.get("CAREERJET_AFFID", "")
+    if not CAREERJET_AFFID:
+        return [], (
+            "Careerjet affiliate ID missing. "
+            "Register free at careerjet.com/partners, "
+            "then add CAREERJET_AFFID to Secrets."
+        )
+
+    base_url = "https://search.api.careerjet.net/v4/query"
     search_location = normalize_location(location)
 
     params = {
         "keywords": keywords.strip(),
         "location": search_location,
-        "locale_code": "en_RO",  # English jobs in Romania
-        "pagesize": str(results_per_page),
+        "locale_code": "en_RO",
+        "pagesize": str(min(results_per_page, 99)),
         "page": "1",
-        "sort": "date",
-        "affid": "678bdee048",  # Public affiliate ID
+        "sort": "relevance",
+        "affid": CAREERJET_AFFID,
+        "user_ip": "86.124.0.1",  # Romanian IP range
+        "user_agent": "Mozilla/5.0 (CareerOS/2.0)",
     }
     headers = {
         "User-Agent": "Ahmed-CareerOS/2.0",
@@ -685,6 +697,11 @@ def search_careerjet_jobs(
             return [], f"Careerjet returned HTTP {response.status_code}."
 
         data = response.json()
+
+        resp_type = data.get("type", "")
+        if resp_type == "ERROR":
+            return [], f"Careerjet error: {data.get('message', 'unknown')}"
+
         jobs = data.get("jobs", [])
 
         if not isinstance(jobs, list):
@@ -700,7 +717,9 @@ def search_careerjet_jobs(
 
             normalized_jobs.append({
                 "title": job.get("title", "Job title not available"),
-                "company": {"display_name": job.get("company", "Company not listed")},
+                "company": {
+                    "display_name": job.get("company", "Company not listed")
+                },
                 "location": {
                     "display_name": job.get("locations", search_location)
                 },
@@ -743,10 +762,11 @@ def remove_duplicate_jobs(jobs: List[Dict]) -> List[Dict]:
                 continue
             seen_urls.add(clean_link)
 
-        # 2. Hash-based title+company dedup (O(1) per job)
+        # 2. Hash-based title+company+location dedup (O(1) per job)
         title = normalize_text(job.get("title", ""))
         company = normalize_text(safe_company_name(job.get("company", {})))
-        job_hash = text_hash(f"{title}{company}")
+        loc = normalize_text(job.get("location", {}).get("display_name", ""))
+        job_hash = text_hash(f"{title}{company}{loc}")
 
         if job_hash in seen_hashes:
             continue
@@ -758,15 +778,166 @@ def remove_duplicate_jobs(jobs: List[Dict]) -> List[Dict]:
 
 
 # =========================================================
-# MATCHING ENGINE — Weighted Multi-Dimensional (max 100)
+# HARD FILTER — Reject before scoring
 # =========================================================
+# Romanian requirement levels (granular)
+ROMANIAN_REJECT = [
+    "romanian c1", "romanian c2", "romana c1", "romana c2",
+    "fluent romanian", "romanian fluent", "fluent in romanian",
+    "native romanian", "romanian native",
+    "limba romana nivel avansat", "romana avansat",
+    "romanian mandatory", "romanian is mandatory",
+    "excellent romanian", "very good romanian",
+]
+
+ROMANIAN_RISKY = [
+    "romanian b2", "romana b2", "romanian required",
+    "romanian language required", "limba romana",
+    "limba română", "romanian speaking",
+    "good knowledge of romanian", "advanced romanian",
+    "cunoasterea limbii romane",
+]
+
+ROMANIAN_OK = [
+    "romanian a1", "romanian a2", "romana a1", "romana a2",
+    "basic romanian", "romanian optional",
+    "romanian is a plus", "romanian preferred",
+    "romanian beginner",
+]
+
+# Remote geography classification
+REMOTE_GOOD = [
+    "remote — europe", "remote europe", "remote - europe",
+    "remote — eu", "remote eu", "remote - eu",
+    "remote — romania", "remote romania", "remote - romania",
+    "remote — eea", "remote eea", "remote — emea",
+    "remote — cet", "remote cet",
+    "worldwide", "global", "anywhere",
+]
+
+REMOTE_BAD = [
+    "us only", "usa only", "united states only",
+    "us residents", "us-based", "us based",
+    "canada only", "uk only", "uk residents",
+    "india only", "australia only",
+    "must be located in the us",
+    "must be based in the us",
+]
+
+
+def hard_filter_job(job: Dict) -> Tuple[bool, str]:
+    """
+    Returns (pass, reason).
+    pass=True means the job should be scored.
+    pass=False means it's rejected before scoring.
+    """
+    title = job.get("title", "")
+    description = job.get("description", "")
+    location_text = job.get("location", {}).get("display_name", "")
+
+    text = normalize_text(f"{title} {description}")
+    title_norm = normalize_text(title)
+    loc_norm = normalize_text(location_text)
+
+    # 1. Romanian C1/C2/Native/Fluent → REJECT
+    if any(normalize_text(p) in text for p in ROMANIAN_REJECT):
+        return False, "🔴 Requires advanced Romanian (C1/C2/fluent/native)"
+
+    # 2. Geographic restriction on remote jobs
+    if any(r in loc_norm for r in REMOTE_BAD):
+        return False, "🔴 Geographically restricted (US/Canada/UK/India only)"
+    # Also check description for remote restrictions
+    if "remote" in loc_norm and any(r in text for r in REMOTE_BAD):
+        return False, "🔴 Remote but restricted to non-EU region"
+
+    # 3. Clearly wrong career track
+    if any(nk in title_norm for nk in NEGATIVE_KEYWORDS):
+        return False, f"🔴 Wrong career track: {title}"
+
+    return True, ""
+
+
+# =========================================================
+# MATCHING ENGINE v2 — Zero-default, Career-aware
+# =========================================================
+def classify_language_mention(text: str, lang: str) -> str:
+    """Classify how a language is mentioned: required/preferred/plus/none."""
+    patterns_required = [
+        f"{lang} required", f"fluent {lang}", f"{lang} fluent",
+        f"fluent in {lang}", f"{lang} is required",
+        f"{lang} is mandatory", f"{lang} mandatory",
+        f"native {lang}", f"{lang} native",
+        f"{lang} speaker", f"{lang}-speaking",
+        f"{lang} c1", f"{lang} c2",
+    ]
+    patterns_preferred = [
+        f"{lang} preferred", f"{lang} is preferred",
+        f"{lang} b2", f"{lang} advanced",
+    ]
+    patterns_plus = [
+        f"{lang} is a plus", f"{lang} a plus",
+        f"{lang} is an advantage", f"{lang} advantage",
+        f"{lang} is a bonus", f"{lang} bonus",
+        f"{lang} would be nice", f"{lang} desirable",
+    ]
+
+    if any(p in text for p in patterns_required):
+        return "required"
+    if any(p in text for p in patterns_preferred):
+        return "preferred"
+    if any(p in text for p in patterns_plus):
+        return "plus"
+    if lang in text:
+        return "mentioned"
+    return "none"
+
+
+def classify_romanian_requirement(text: str) -> str:
+    """
+    Returns: 'reject', 'risky', 'ok', 'bonus', 'none'
+    """
+    if any(normalize_text(p) in text for p in ROMANIAN_REJECT):
+        return "reject"
+    if any(normalize_text(p) in text for p in ROMANIAN_RISKY):
+        return "risky"
+    if any(normalize_text(p) in text for p in ROMANIAN_OK):
+        return "bonus"
+    # Check for generic mention
+    if any(w in text for w in ["romanian", "romana", "română", "limba romana"]):
+        return "risky"
+    return "none"
+
+
+def classify_remote_geography(loc_text: str, desc_text: str) -> str:
+    """Returns: 'excellent', 'good', 'risky', 'bad', 'not_remote'"""
+    loc = normalize_text(loc_text)
+    text = normalize_text(desc_text)
+
+    if "remote" not in loc and "remote" not in text:
+        return "not_remote"
+
+    if any(r in loc for r in REMOTE_BAD) or any(r in text for r in REMOTE_BAD):
+        return "bad"
+
+    if any(r in loc for r in REMOTE_GOOD) or any(r in text for r in REMOTE_GOOD):
+        return "excellent"
+
+    # Generic "Remote" without geographic info
+    return "good"
+
+
 def calculate_match(job: Dict) -> Dict:
     """
-    Dimension weights (total = 100):
-      Location:     20    |  Arabic:      15
-      English:      10    |  Skills:      25
-      Experience:   10    |  Education:    5
-      Salary:       10    |  Relevance:    5
+    Matching Engine v2 — Zero-default, career-aware scoring.
+
+    Key principle: score represents POSITIVE EVIDENCE of fit.
+    Missing data = 0 points (not a free boost).
+
+    Dimensions (total = 100):
+      Location:     20  |  Arabic:      15
+      English:      10  |  Skills:      25
+      Experience:   10  |  Education:    5
+      Salary:       10  |  Relevance:    5
     """
     title = job.get("title", "")
     description = job.get("description", "")
@@ -788,38 +959,67 @@ def calculate_match(job: Dict) -> Dict:
     loc_score = 0
     if any(s in loc_norm for s in LOCATION_SYNONYMS["Timișoara"]):
         loc_score = 20
-        reasons.append("📍 Location: Timișoara — perfect match")
+        reasons.append("📍 Timișoara — perfect location match")
     elif any(s in loc_norm for s in ["romania", "românia"]):
         loc_score = 15
-        reasons.append("🇷🇴 Location: Romania")
-    elif any(s in loc_norm for s in LOCATION_SYNONYMS["Remote"]):
-        loc_score = 12
-        reasons.append("🏠 Location: Remote")
+        reasons.append("🇷🇴 Romania")
+    elif "remote" in loc_norm or "remote" in text[:200]:
+        remote_geo = classify_remote_geography(location_text, description)
+        if remote_geo == "excellent":
+            loc_score = 14
+            reasons.append("🏠 Remote — EU/Europe/Worldwide eligible")
+        elif remote_geo == "good":
+            loc_score = 10
+            reasons.append("🏠 Remote — verify Romania eligibility")
+            warnings.append("⚠️ Remote without explicit EU mention — check eligibility")
+        else:
+            loc_score = 3
+            warnings.append("⚠️ Remote with potential geographic restriction")
     elif any(s in loc_norm for s in ["europe", "europa", "eu", "eea"]):
-        loc_score = 8
-        reasons.append("🌍 Location: Europe")
+        loc_score = 10
+        reasons.append("🌍 Europe-based")
     else:
-        loc_score = 3
+        loc_score = 0  # Unknown/other location = no points
     score += loc_score
     dims["location"] = loc_score
 
-    # --- 2. ARABIC (max 15) ---
+    # --- 2. ARABIC (max 15) — granular ---
+    arabic_level = classify_language_mention(text, "arabic")
     arabic_score = 0
-    if any(w in text for w in ["arabic", "arabe", "arabă", "limba araba"]):
+    if arabic_level == "required":
         arabic_score = 15
-        reasons.append("🗣️ Arabic language required — strong match")
+        reasons.append("🗣️ Arabic required — strongest match")
+    elif arabic_level == "preferred":
+        arabic_score = 12
+        reasons.append("🗣️ Arabic preferred — strong match")
+    elif arabic_level == "plus":
+        arabic_score = 10
+        reasons.append("🗣️ Arabic is a plus")
+    elif arabic_level == "mentioned":
+        arabic_score = 8
+        reasons.append("🗣️ Arabic mentioned in listing")
+    elif any(w in text for w in ["multilingual", "multi-lingual", "bilingual"]):
+        arabic_score = 4
+        reasons.append("🌐 Multilingual role — Arabic is an asset")
     else:
-        arabic_score = 2
+        arabic_score = 0  # Not mentioned = no points
     score += arabic_score
     dims["arabic"] = arabic_score
 
-    # --- 3. ENGLISH (max 10) ---
+    # --- 3. ENGLISH (max 10) — granular ---
+    eng_level = classify_language_mention(text, "english")
     eng_score = 0
-    if any(w in text for w in ["english", "engleza", "limba engleza"]):
+    if eng_level == "required":
         eng_score = 10
-        reasons.append("🇬🇧 English language required — matches profile")
+        reasons.append("🇬🇧 English required — matches your profile")
+    elif eng_level == "preferred":
+        eng_score = 8
+        reasons.append("🇬🇧 English preferred")
+    elif eng_level in ("plus", "mentioned"):
+        eng_score = 6
+        reasons.append("🇬🇧 English mentioned")
     else:
-        eng_score = 4
+        eng_score = 0
     score += eng_score
     dims["english"] = eng_score
 
@@ -841,26 +1041,29 @@ def calculate_match(job: Dict) -> Dict:
     # --- 5. EXPERIENCE (max 10) ---
     exp_score = 0
     if re.search(r"\b(?:senior|lead|manager|director|head of)\b", title_norm):
-        exp_score = 10
-        reasons.append("🧑‍💼 Senior/leadership — fits 10+ years")
-    elif re.search(r"\b(?:mid|intermediate|specialist)\b", title_norm):
         exp_score = 8
-        reasons.append("🧑‍💼 Mid-level role")
+        reasons.append("🧑‍💼 Senior/leadership role — fits 10+ years")
+    elif re.search(r"\b(?:specialist|coordinator|officer|analyst)\b", title_norm):
+        exp_score = 7
+        reasons.append("🧑‍💼 Specialist/coordinator level — good fit")
     elif re.search(r"\b(?:junior|entry|intern|trainee|graduate)\b", title_norm):
         exp_score = 4
-        reasons.append("🧑‍💼 Entry-level — may be below experience")
+        reasons.append("🧑‍💼 Entry-level — consider if it matches your goals")
     else:
-        exp_score = 6
+        exp_score = 3  # Low default — unclassified title
     score += exp_score
     dims["experience"] = exp_score
 
     # --- 6. EDUCATION (max 5) ---
     edu_score = 0
-    if any(w in text for w in ["law", "legal", "juridic", "master"]):
+    if any(w in text for w in ["law", "legal", "juridic"]):
         edu_score = 5
-        reasons.append("🎓 Aligns with Law degree")
+        reasons.append("🎓 Law/legal background valued")
+    elif "master" in text:
+        edu_score = 4
+        reasons.append("🎓 Master's degree relevant")
     else:
-        edu_score = 3
+        edu_score = 0  # No education signal = no points
     score += edu_score
     dims["education"] = edu_score
 
@@ -872,45 +1075,42 @@ def calculate_match(job: Dict) -> Dict:
             reasons.append(f"💰 Salary meets target ({salary_min:,.0f}+)")
         elif salary_min >= PROFILE["target_salary_min"] * 0.8:
             salary_score = 7
+            reasons.append(f"💰 Salary close to target ({salary_min:,.0f})")
         else:
-            salary_score = 2
+            salary_score = 3
     else:
-        salary_score = 5
+        salary_score = 0  # Unknown salary = no points
     score += salary_score
     dims["salary"] = salary_score
 
     # --- 8. RELEVANCE (max 5) ---
     relevance_score = 0
     if any(w in text for w in [
-        "multilingual", "bilingual", "bpo", "shared service",
-        "outsourcing", "middle east", "mena", "gulf",
+        "bpo", "shared service", "outsourcing",
+        "middle east", "mena", "gulf",
     ]):
         relevance_score = 5
-        reasons.append("🌐 Multilingual / BPO / MENA relevance")
+        reasons.append("🌐 BPO / MENA / Shared Services — high relevance")
+    elif any(w in text for w in ["multilingual", "bilingual"]):
+        relevance_score = 3
+        reasons.append("🌐 Multilingual environment")
     else:
-        relevance_score = 2
+        relevance_score = 0
     score += relevance_score
     dims["relevance"] = relevance_score
 
-    # ===== PENALTIES =====
-    if any(normalize_text(p) in text for p in ROMANIAN_PATTERNS_HIGH):
-        score -= 15
-        warnings.append("⚠️ Requires advanced Romanian (C1/C2/fluent)")
-    elif any(normalize_text(p) in text for p in ROMANIAN_PATTERNS_ANY):
+    # ===== ROMANIAN COMPATIBILITY (bonus or penalty) =====
+    rom_class = classify_romanian_requirement(text)
+    if rom_class == "bonus":
+        score += 3
+        reasons.append("🟢 Romanian beginner/optional — compatible with A1")
+    elif rom_class == "risky":
         score -= 8
-        warnings.append("⚠️ Romanian language may be required")
-
-    restricted = [
-        "united states", "usa only", "us only",
-        "canada only", "uk only", "india only", "us-based",
-    ]
-    if "remote" in loc_norm and any(r in loc_norm for r in restricted):
-        score -= 10
-        warnings.append("🌍 Remote but geographically restricted")
-
-    if any(nk in title_norm for nk in NEGATIVE_KEYWORDS):
-        score -= 20
-        warnings.append("🚫 Role title suggests different career track")
+        warnings.append(
+            "🟠 Romanian B2+ may be required — verify before applying"
+        )
+    elif rom_class == "none":
+        pass  # No Romanian mentioned — neutral (best case for Ahmed)
 
     score = max(0, min(100, score))
 
@@ -950,14 +1150,16 @@ def analyze_with_claude(job: Dict, match_data: Dict) -> str:
 
     prompt = f"""You are Ahmed's career advisor. Analyze this job against his profile.
 
-AHMED'S PROFILE:
-- 10 years: operations, client management, financial compliance, tax, accounting, collections, B2B
-- Managed 250+ corporate accounts at Egyptian Tax Authority
-- Languages: Arabic (native), English (B2+), Romanian (beginner A1)
-- Education: Master's in Law (LL.M.)
-- Location: Timișoara, Romania (full work authorization, currently employed)
+AHMED'S PROFILE (single source of truth):
+- Name: {PROFILE['name']}
+- Location: {PROFILE['location']}, {PROFILE['country']} (full work authorization)
+- Experience: {PROFILE['experience_years']}+ years in operations, client management, financial compliance, tax, accounting, collections, B2B
+- Previous role: Managed 250+ corporate accounts at Egyptian Tax Authority (10 years)
+- Current role: Production operator at Techplast RO, Timișoara (employed, seeking career transition)
+- Languages: Arabic (native), English (B2+), Romanian ({PROFILE['romanian_level']})
+- Education: {PROFILE['education']}
 - Tools: SAP, Excel/VBA, IBM Cognos, Power BI, SQL
-- Target salary: 5,000-7,000 RON/month
+- Target salary: {PROFILE['target_salary_min']:,}-{PROFILE['target_salary_max']:,} RON/month
 
 JOB DETAILS:
 Title: {title}
@@ -973,29 +1175,28 @@ Strengths found:
 Warnings:
 {match_warnings}
 
-INSTRUCTIONS:
-Respond in this exact format:
-MATCH: [X]% — [one-line justification]
+RESPOND IN THIS EXACT FORMAT:
 
-STRENGTHS:
-1. [strength]
-2. [strength]
-3. [strength]
+MATCH: [X]%
 
-RISKS:
-1. [risk]
-2. [risk]
-3. [risk]
+FIT:
+🟢/🟡/🔴 Career: [one line]
+🟢/🟡/🔴 Language: [one line]
+🟢/🟡/🔴 Romanian: [one line about compatibility with {PROFILE['romanian_level']} level]
+🟢/🟡/🔴 Location: [one line]
+🟢/🟡/🔴 Salary: [one line]
 
-VERDICT: [APPLY / SKIP / APPLY WITH CAUTION] — [reason]
+VERDICT: 🔥 APPLY / ⚠️ APPLY WITH CAUTION / ❌ SKIP — [reason]
 
-Be concise, practical, and specific to Ahmed's situation."""
+MAIN RISK: [one line]
+
+Be concise and specific to Ahmed's situation in the European job market."""
 
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
         response = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model="claude-3-5-haiku-20241022",
             max_tokens=600,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -1222,7 +1423,7 @@ with st.sidebar:
         ["All", "Timișoara", "Romania", "Remote", "Europe"],
     )
 
-    min_match = st.slider("Minimum match %", 0, 100, 40, 5)
+    min_match = st.slider("Minimum match %", 0, 100, 25, 5)
 
     romanian_filter = st.radio(
         "Romanian requirement",
@@ -1274,7 +1475,10 @@ with st.sidebar:
     st.write(f"Jooble: {'✅' if JOOBLE_API_KEY else '❌ missing'}")
     st.write("Remotive: ✅ free")
     st.write("Arbeitnow: ✅ free")
-    st.write("Careerjet: ✅ free")
+    st.write("Careerjet: " + (
+        "✅" if st.secrets.get("CAREERJET_AFFID", "") else
+        "⚪ needs free registration at careerjet.com/partners"
+    ))
     st.write(f"Adzuna: {'✅' if ADZUNA_APP_ID and ADZUNA_APP_KEY else '⚪ not set'}")
     st.write(f"Claude: {'✅' if CLAUDE_API_KEY else '⚪ optional'}")
 
@@ -1346,13 +1550,20 @@ if search_clicked:
             "4. Make sure location is `Timisoara`"
         )
     else:
-        # Score
+        # Score — Hard filter first, then score survivors
+        passed_jobs = []
+        rejected_count = 0
         for job in all_jobs:
+            passed, reason = hard_filter_job(job)
+            if not passed:
+                rejected_count += 1
+                continue
             job["_match"] = calculate_match(job)
+            passed_jobs.append(job)
 
         # Filter
         filtered = []
-        for job in all_jobs:
+        for job in passed_jobs:
             match = job["_match"]
             s = match["score"]
 
@@ -1371,11 +1582,12 @@ if search_clicked:
                 text = normalize_text(
                     f"{job.get('title', '')} {job.get('description', '')}"
                 )
+                rom_class = classify_romanian_requirement(text)
                 if romanian_filter == "Exclude Romanian-required":
-                    if any(normalize_text(p) in text for p in ROMANIAN_PATTERNS_ANY):
+                    if rom_class in ("reject", "risky"):
                         continue
                 elif romanian_filter == "Allow beginner-friendly":
-                    if any(normalize_text(p) in text for p in ROMANIAN_PATTERNS_HIGH):
+                    if rom_class == "reject":
                         continue
 
             filtered.append(job)
@@ -1393,7 +1605,11 @@ if search_clicked:
             best_score = filtered[0]["_match"]["score"]
             high_count = sum(1 for j in filtered if j["_match"]["score"] >= 70)
 
-            st.success(f"Found {len(filtered)} matching jobs from {len(all_jobs)} total")
+            st.success(
+                f"Found {len(filtered)} matching jobs "
+                f"({rejected_count} auto-rejected, "
+                f"{len(all_jobs)} total from sources)"
+            )
 
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Jobs Found", len(filtered))
