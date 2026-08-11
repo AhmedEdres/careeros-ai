@@ -130,3 +130,30 @@ def test_ranking_is_ordered_by_score():
     at = run_app_with_results()
     scores = [j["_match"].score for j in at.session_state["results"]]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_stale_session_results_are_rescored_after_engine_change():
+    """Regression: an open tab kept showing scores from the previous version.
+
+    The filter signature was built from `id()` and `len()` of the raw jobs, so
+    a code change to the scoring engine did not invalidate results already in
+    session state — the fix looked like it had never been deployed.
+    """
+    at = run_app_with_results()
+    assert at.session_state["results"]
+
+    # Simulate results scored by an older engine still sitting in the session.
+    for job in at.session_state["results"]:
+        job["_match"].score = 999
+    at.session_state["last_signature"] = ("stale-engine-fingerprint",)
+    at.run()
+
+    assert not at.exception
+    assert all(j["_match"].score != 999 for j in at.session_state["results"]), \
+        "results must be rescored when the engine fingerprint changes"
+
+
+def test_engine_version_is_exposed():
+    at = AppTest.from_file(APP_PATH, default_timeout=120).run()
+    captions = " ".join(c.value for c in at.caption)
+    assert "engine" in captions, "the engine fingerprint should be visible for diagnosis"

@@ -43,6 +43,31 @@ st.set_page_config(
 )
 
 
+@st.cache_resource
+def engine_version() -> str:
+    """Fingerprint of the scoring code, used to invalidate stale sessions.
+
+    A browser tab left open across a deployment keeps its scored results in
+    session state. When the engine changes, those cached scores are wrong but
+    look current — indistinguishable from the fix not being deployed. Hashing
+    the engine modules makes any code change invalidate them automatically.
+    """
+    import hashlib
+    import pathlib
+
+    digest = hashlib.md5()
+    root = pathlib.Path(__file__).parent / "careeros"
+    for path in sorted(root.rglob("*.py")):
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            continue
+    return digest.hexdigest()[:12]
+
+
+ENGINE_VERSION = engine_version()
+
+
 # =========================================================
 # SECRETS (never crash when secrets.toml is absent)
 # =========================================================
@@ -113,9 +138,16 @@ def current_filters() -> FilterOptions:
 
 
 def filter_signature() -> tuple:
-    """Everything that can change the result list without a new API call."""
+    """Everything that can change the result list without a new API call.
+
+    ``ENGINE_VERSION`` is part of the signature so that a code change to the
+    scoring engine invalidates results cached in an open browser session.
+    Without it a long-lived tab keeps showing scores from the previous
+    version, which looks exactly like the fix never landed.
+    """
     options = current_filters()
     return (
+        ENGINE_VERSION,
         id(st.session_state.raw_jobs),
         len(st.session_state.raw_jobs),
         options.min_score, options.location_filter, options.romanian_filter,
@@ -191,7 +223,7 @@ def run_ai(kind: str, job: Dict, match, label: str) -> None:
 # =========================================================
 with st.sidebar:
     st.title("🎯 CareerOS AI")
-    st.caption(f"v{__version__}")
+    st.caption(f"v{__version__} · engine {ENGINE_VERSION}")
 
     st.subheader("🎯 Search strategy")
     preset = st.radio(
@@ -336,6 +368,11 @@ with clear_col:
 if do_refresh:
     st.session_state.search_nonce += 1
     st.cache_data.clear()
+    # Drop every derived value too: a stale signature or cached AI answer
+    # would otherwise survive the refresh and hide the new results.
+    st.session_state.results = []
+    st.session_state.last_signature = None
+    st.session_state.ai_cache = {}
     do_search = True
 
 if do_search:
