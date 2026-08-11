@@ -39,6 +39,14 @@ class Profile:
     target_salary_max: int = 7000
     open_to_remote: bool = True
     open_to_relocation: bool = False
+    # Languages the candidate does NOT speak. A posting that *requires* one of
+    # these is effectively closed to him, however well it matches otherwise.
+    other_languages: List[str] = field(default_factory=lambda: [
+        "french", "german", "dutch", "italian", "spanish", "portuguese",
+        "polish", "czech", "hungarian", "greek", "turkish", "russian",
+        "swedish", "norwegian", "danish", "finnish", "hebrew", "chinese",
+        "japanese", "korean", "bulgarian", "serbian", "croatian", "ukrainian",
+    ])
     skills: List[str] = field(default_factory=lambda: [
         "operations", "client management", "financial compliance",
         "customer service", "customer support", "excel", "sap",

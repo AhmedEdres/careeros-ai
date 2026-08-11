@@ -243,10 +243,13 @@ def run_search(request: SearchRequest, max_workers: int = 8) -> SearchReport:
         if spec.client_side_filter:
             # These providers download the whole board and filter locally, so
             # calling them once per query would re-download identical payloads.
-            # One call with the union of keywords is both faster and kinder to
-            # the free APIs.
-            combined = " ".join(queries)
-            tasks.append((key, build_kwargs(key, combined, request.limit_per_source * 2)))
+            # One call is faster and kinder to the free APIs — but it must
+            # receive the queries as separate PHRASES, otherwise a merged
+            # keyword string degrades into a bag of words and lets unrelated
+            # jobs through ("Office Cleaner" for "back office").
+            kwargs = build_kwargs(key, " ".join(queries), request.limit_per_source * 2)
+            kwargs["phrases"] = list(queries)
+            tasks.append((key, kwargs))
         else:
             for query in queries:
                 tasks.append((key, build_kwargs(key, query, request.limit_per_source)))
@@ -289,6 +292,7 @@ class FilterOptions:
     romanian_filter: str = "Any"
     max_age_days: int = 0            # 0 == no limit
     only_with_salary: bool = False
+    hide_language_blocked: bool = False
     hide_applied: bool = False
     applied_urls: Sequence[str] = field(default_factory=list)
     sort_by: str = "Best match"
@@ -310,6 +314,7 @@ def score_and_filter(
         "filtered_romanian": 0,
         "filtered_age": 0,
         "filtered_salary": 0,
+        "filtered_language": 0,
         "filtered_applied": 0,
     }
     applied = {canonical_url(u) for u in options.applied_urls}
@@ -350,6 +355,10 @@ def score_and_filter(
 
         if options.only_with_salary and not (match.salary and match.salary.has_value):
             stats["filtered_salary"] += 1
+            continue
+
+        if options.hide_language_blocked and match.blocking_languages:
+            stats["filtered_language"] += 1
             continue
 
         if options.hide_applied and canonical_url(job.get("redirect_url", "")) in applied:

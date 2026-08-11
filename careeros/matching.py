@@ -75,6 +75,9 @@ class MatchResult:
     remote: str = "not_remote"
     salary: Optional[SalaryInfo] = None
     adjustments: List[Tuple[str, int]] = field(default_factory=list)
+    blocking_languages: List[str] = field(default_factory=list)
+    normalised: bool = False
+    attainable: int = 100
 
     def as_dict(self) -> Dict:
         return {
@@ -85,6 +88,7 @@ class MatchResult:
             "confidence": self.confidence,
             "romanian": self.romanian,
             "remote": self.remote,
+            "blocking_languages": self.blocking_languages,
         }
 
 
@@ -187,11 +191,21 @@ def classify_remote_geography(location_text: str, description_text: str) -> str:
     return "good"
 
 
+HIGH_PRIORITY_THRESHOLD = 80
+MEDIUM_PRIORITY_THRESHOLD = 55
+
+
 def priority_band(score: int, confidence: str = "medium") -> Tuple[str, str]:
-    """Map a score to a (label, colour) badge."""
-    if score >= 70:
+    """Map a score to a (label, band) badge.
+
+    Thresholds sit at 80/55 because scores are normalised against the
+    attainable points: a strong local match now genuinely reaches the 80s, so a
+    lower bar would mark almost everything "high priority" and tell the user
+    nothing.
+    """
+    if score >= HIGH_PRIORITY_THRESHOLD:
         return "🔥 HIGH PRIORITY", "high"
-    if score >= 45:
+    if score >= MEDIUM_PRIORITY_THRESHOLD:
         return "🟡 WORTH A LOOK", "medium"
     return "⚪ LOW PRIORITY", "low"
 
@@ -375,11 +389,36 @@ def _score_experience(full: str, title: str, profile: Profile, result: MatchResu
     return min(score, DIMENSION_MAX["experience"])
 
 
-def _score_education(full: str, profile: Profile, result: MatchResult) -> int:
+# Boilerplate that mentions "legal" without the role being legal work.
+_LEGAL_BOILERPLATE = [
+    "legal requirements", "legal obligations", "legal regulations",
+    "legal framework", "legally required", "legal reasons", "legal basis",
+    "equal opportunity", "legally authorized", "legally authorised",
+    "legal working age", "legal entity", "legal notice", "in accordance with legal",
+]
+
+
+def _score_education(full: str, title: str, profile: Profile, result: MatchResult) -> int:
     edu = normalize_text(profile.education)
-    if contains_any(full, ["law", "legal", "juridic", "lawyer", "jurist", "paralegal"]) and "law" in edu:
-        result.reasons.append("🎓 Law/legal background is directly valued")
+    legal_terms = ["law", "legal", "juridic", "lawyer", "jurist", "paralegal", "counsel"]
+
+    # Only credit a legal background when the ROLE is legal — not when the ad
+    # merely says it complies with "legal requirements".
+    legal_in_title = contains_any(title, legal_terms)
+
+    # Strip boilerplate phrases before deciding whether "legal" is meaningful.
+    body_without_boilerplate = full
+    for phrase in _LEGAL_BOILERPLATE:
+        body_without_boilerplate = body_without_boilerplate.replace(normalize_text(phrase), " ")
+
+    legal_in_body = contains_any(body_without_boilerplate, legal_terms)
+
+    if "law" in edu and legal_in_title:
+        result.reasons.append("🎓 Legal role — your Law degree is directly relevant")
         return 5
+    if "law" in edu and legal_in_body:
+        result.reasons.append("🎓 Legal/compliance exposure — Law degree is an asset")
+        return 4
     if contains_any(full, ["master", "masters", "postgraduate"]):
         result.reasons.append("🎓 Master's degree relevant")
         return 4
@@ -423,6 +462,15 @@ def _score_salary(job: Dict, profile: Profile, result: MatchResult) -> int:
     return 0
 
 
+def required_foreign_languages(full: str, profile: Profile) -> List[str]:
+    """Languages the posting *requires* that the candidate does not speak."""
+    blocking = []
+    for language in profile.other_languages:
+        if classify_language_mention(full, language) == "required":
+            blocking.append(language)
+    return blocking
+
+
 def _score_relevance(full: str, result: MatchResult) -> int:
     if contains_any(full, ["bpo", "shared services", "shared service", "outsourcing",
                            "middle east", "mena", "gulf", "gcc"]):
@@ -459,7 +507,7 @@ def calculate_match(job: Dict, profile: Profile) -> MatchResult:
         "english": _score_english(full, result),
         "experience": _score_experience(full, title, profile, result),
         "salary": _score_salary(job, profile, result),
-        "education": _score_education(full, profile, result),
+        "education": _score_education(full, title, profile, result),
         "relevance": _score_relevance(full, result),
     }
     total = sum(dims.values())
@@ -483,6 +531,18 @@ def calculate_match(job: Dict, profile: Profile) -> MatchResult:
         result.adjustments.append(("Advanced Romanian required", MAX_ROMANIAN_PENALTY))
         result.warnings.append("🔴 Advanced Romanian required")
 
+    # --- Languages the candidate does not speak ----------------------------
+    # A required French/German/Dutch posting is effectively closed to him, so
+    # it must never outrank a role he can actually get.
+    blocking_languages = required_foreign_languages(full, profile)
+    if blocking_languages:
+        names = ", ".join(lang.title() for lang in blocking_languages[:3])
+        penalty = -30 if len(blocking_languages) == 1 else -40
+        total += penalty
+        result.adjustments.append((f"Requires {names}", penalty))
+        result.warnings.insert(0, f"🔴 Requires fluent {names} — not in your profile")
+        result.blocking_languages = blocking_languages
+
     # --- Freshness nudge ---------------------------------------------------
     age_days = job.get("age_days")
     if isinstance(age_days, (int, float)):
@@ -497,6 +557,29 @@ def calculate_match(job: Dict, profile: Profile) -> MatchResult:
             total -= 3
             result.adjustments.append(("Posting older than 45 days", -3))
             result.warnings.append("⚠️ Listing is over 45 days old — may be filled")
+
+    # --- Normalise against what was actually knowable ----------------------
+    # Arabic and salary are rarely mentioned at all. Scoring them out of the
+    # full 100 pushed genuinely excellent local jobs down to ~70%, so almost
+    # nothing reached "high priority" and the ranking lost its meaning.
+    # Dimensions that carry no signal in the posting are therefore excluded
+    # from the denominator: the score becomes "how well does this match on the
+    # evidence available", which is what the user actually needs to compare.
+    unknown = 0
+    if dims["arabic"] == 0 and not contains_any(full, ["arabic", "multilingual", "bilingual"]):
+        unknown += DIMENSION_MAX["arabic"]
+    if dims["salary"] == 0 and not (result.salary and result.salary.has_value):
+        unknown += DIMENSION_MAX["salary"]
+
+    attainable = sum(DIMENSION_MAX.values()) - unknown
+    if attainable > 0 and unknown:
+        base = sum(dims.values())
+        adjustments = total - base
+        # Rescale the earned points onto the full 0-100 range, then re-apply
+        # the bonuses/penalties so they keep their intended weight.
+        total = (base / attainable) * 100 + adjustments
+        result.normalised = True
+        result.attainable = attainable
 
     result.confidence = _confidence(desc, job)
     result.dimensions = dims

@@ -73,6 +73,9 @@ def clean_html_text(text: object) -> str:
     value = _BLOCK_BREAK_RE.sub("\n", value)
     value = _TAG_RE.sub(" ", value)
     value = html.unescape(value)
+    # &nbsp; unescapes to U+00A0, which is not matched by \s in some contexts
+    # and shows up as a stray character in the UI.
+    value = value.replace("\u00a0", " ").replace("\u200b", "")
     # Collapse spaces but keep single newlines so descriptions stay readable.
     value = re.sub(r"[ \t\r\f\v]+", " ", value)
     value = re.sub(r"\n\s*\n\s*", "\n\n", value)

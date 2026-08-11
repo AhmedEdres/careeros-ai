@@ -96,3 +96,24 @@ class TestMisc:
     def test_truncate(self):
         assert truncate("hello world", 50) == "hello world"
         assert truncate("hello world", 7).endswith("…")
+
+
+class TestCleanHtmlRobustness:
+    """clean_html_text must never raise: sources send dicts, None and junk.
+
+    The deployed build crashed with
+    "AttributeError: 'dict' object has no attribute ..." inside this function.
+    """
+
+    @pytest.mark.parametrize("value", [
+        None, "", {}, {"display_name": "x"}, [], 123, 4.5, True, b"bytes",
+    ])
+    def test_never_raises_on_odd_input(self, value):
+        assert isinstance(clean_html_text(value), str)
+
+    def test_nbsp_becomes_a_normal_space(self):
+        assert "\u00a0" not in clean_html_text("<p>Hello&nbsp;world</p>")
+        assert clean_html_text("<p>Hello&nbsp;world</p>") == "Hello world"
+
+    def test_zero_width_space_removed(self):
+        assert "\u200b" not in clean_html_text("a\u200bb")
