@@ -913,16 +913,28 @@ def classify_remote_geography(loc_text: str, desc_text: str) -> str:
     loc = normalize_text(loc_text)
     text = normalize_text(desc_text)
 
-    if "remote" not in loc and "remote" not in text:
+    combined = f"{loc} {text[:500]}"
+
+    if "remote" not in loc and "remote" not in text[:300]:
         return "not_remote"
 
-    if any(r in loc for r in REMOTE_BAD) or any(r in text for r in REMOTE_BAD):
+    if any(r in combined for r in REMOTE_BAD):
         return "bad"
 
-    if any(r in loc for r in REMOTE_GOOD) or any(r in text for r in REMOTE_GOOD):
+    if any(r in combined for r in REMOTE_GOOD):
         return "excellent"
 
-    # Generic "Remote" without geographic info
+    # Check for European country names in location string
+    eu_countries = [
+        "germany", "france", "spain", "italy", "netherlands",
+        "poland", "czech", "austria", "belgium", "portugal",
+        "romania", "ireland", "sweden", "denmark", "finland",
+        "norway", "switzerland", "hungary", "croatia", "greece",
+        "emea", "cet", "european",
+    ]
+    if any(c in loc for c in eu_countries):
+        return "excellent"
+
     return "good"
 
 
@@ -1214,20 +1226,65 @@ Be concise and specific to Ahmed's situation in the European job market."""
 
 
 # =========================================================
-# MULTI-QUERY SEARCH
+# CAREER-TIER SEARCH STRATEGIES
 # =========================================================
-def build_search_queries(base_keywords: str) -> List[str]:
+CAREER_PRESETS = {
+    "🔥 Full Career Scan (recommended)": [
+        "arabic customer support",
+        "financial operations",
+        "back office",
+        "accounts payable",
+        "operations coordinator",
+        "compliance",
+    ],
+    "💰 Finance & Compliance": [
+        "financial operations",
+        "tax compliance",
+        "accounts payable",
+        "accounting specialist",
+        "compliance officer",
+    ],
+    "🗣️ Arabic-Speaking Roles": [
+        "arabic customer support",
+        "arabic speaking",
+        "arabic english support",
+    ],
+    "⚙️ Operations & Back Office": [
+        "operations coordinator",
+        "back office",
+        "operations specialist",
+        "shared services",
+    ],
+    "📞 Customer Support": [
+        "customer support",
+        "customer service",
+        "client support",
+    ],
+    "📝 Custom keywords (type below)": [],
+}
+
+
+def build_search_queries(
+    base_keywords: str, preset: str = ""
+) -> List[str]:
+    """Use preset queries or expand custom keywords."""
+    if preset and preset in CAREER_PRESETS and CAREER_PRESETS[preset]:
+        return CAREER_PRESETS[preset]
+
     queries = [base_keywords.strip()]
     base_lower = base_keywords.lower().strip()
 
     expansions = {
-        "customer support": ["customer service", "arabic customer support"],
+        "customer support": ["customer service", "arabic customer support", "client support"],
         "customer service": ["customer support", "arabic customer service"],
-        "operations": ["operations coordinator", "back office operations"],
-        "accounting": ["accounts payable", "accounts receivable"],
-        "finance": ["financial operations", "financial compliance"],
-        "back office": ["back office operations", "data entry"],
-        "tax": ["tax accounting", "tax compliance"],
+        "operations": ["operations coordinator", "back office operations", "operations specialist"],
+        "accounting": ["accounts payable", "accounts receivable", "bookkeeper"],
+        "finance": ["financial operations", "financial compliance", "financial analyst"],
+        "back office": ["back office operations", "data entry", "shared services"],
+        "tax": ["tax accounting", "tax compliance", "tax specialist"],
+        "compliance": ["compliance officer", "aml kyc", "regulatory compliance"],
+        "arabic": ["arabic customer support", "arabic speaking", "arabic operations"],
+        "sap": ["sap specialist", "sap operations", "erp specialist"],
     }
 
     for key, extras in expansions.items():
@@ -1242,7 +1299,7 @@ def build_search_queries(base_keywords: str) -> List[str]:
             seen.add(q.lower())
             unique.append(q)
 
-    return unique[:4]
+    return unique[:5]
 
 
 # =========================================================
@@ -1259,9 +1316,15 @@ def run_parallel_search(
     use_careerjet: bool,
     expand_queries: bool,
     refresh_count: int,
+    preset: str = "",
 ) -> Tuple[List[Dict], List[str], List[str]]:
 
-    queries = build_search_queries(keywords) if expand_queries else [keywords]
+    if preset and preset in CAREER_PRESETS and CAREER_PRESETS[preset]:
+        queries = build_search_queries("", preset=preset)
+    elif expand_queries:
+        queries = build_search_queries(keywords)
+    else:
+        queries = [keywords]
     tasks = []
 
     for query in queries:
@@ -1304,9 +1367,10 @@ def run_parallel_search(
 
     all_jobs: List[Dict] = []
     errors: List[str] = []
+    seen_errors: set = set()  # Deduplicate error messages
     source_counts: Dict[str, int] = {}
 
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         future_map = {
             executor.submit(func, **kwargs): name
             for name, func, kwargs in tasks
@@ -1318,14 +1382,21 @@ def run_parallel_search(
                 jobs, err = future.result()
                 if err:
                     if "skipped for Romania" not in str(err):
-                        errors.append(f"{source}: {err}")
+                        # Show each unique error only once
+                        err_key = f"{source}: {err}"
+                        if err_key not in seen_errors:
+                            seen_errors.add(err_key)
+                            errors.append(err_key)
                 else:
                     all_jobs.extend(jobs)
                     source_counts[source] = (
                         source_counts.get(source, 0) + len(jobs)
                     )
             except Exception as e:
-                errors.append(f"{source}: {e}")
+                err_key = f"{source}: {e}"
+                if err_key not in seen_errors:
+                    seen_errors.add(err_key)
+                    errors.append(err_key)
 
     counts_list = [f"{s}: {c}" for s, c in source_counts.items()]
     return all_jobs, counts_list, errors
@@ -1392,9 +1463,25 @@ st.write(
 with st.sidebar:
     st.header("⚙️ Search Settings")
 
-    keywords = st.text_input("🔍 Keywords", "customer support")
+    # Career preset selector
+    st.subheader("🎯 Search Strategy")
+    preset_names = list(CAREER_PRESETS.keys())
+    selected_preset = st.radio(
+        "Choose a career track",
+        preset_names,
+        index=0,
+        help="Full Career Scan searches across all your career domains simultaneously",
+    )
+
+    is_custom = "Custom" in selected_preset
+    keywords = st.text_input(
+        "🔍 Custom keywords" if is_custom else "🔍 Keywords (override preset)",
+        "customer support" if is_custom else "",
+        help="Leave empty to use the selected preset above",
+    )
+
     location = st.text_input("📍 Location", "Timisoara")
-    max_results = st.slider("Results per source", 5, 50, 25)
+    max_results = st.slider("Results per source", 5, 50, 20)
 
     st.divider()
     st.subheader("🔗 Sources")
@@ -1402,11 +1489,11 @@ with st.sidebar:
     search_remote = st.checkbox("🌍 Remotive — Remote", value=True)
     search_arbeitnow = st.checkbox(
         "🇪🇺 Arbeitnow — EU Jobs", value=True,
-        help="Free EU job board — Greenhouse, SmartRecruiters, etc. No key needed",
+        help="Free EU job board — Greenhouse, SmartRecruiters, etc.",
     )
     search_careerjet = st.checkbox(
-        "🔍 Careerjet — Romania & EU", value=True,
-        help="International job search engine with Romanian locale. Free, no key needed",
+        "🔍 Careerjet — Romania & EU", value=False,
+        help="Needs free registration at careerjet.com/partners",
     )
     search_adzuna = st.checkbox("🌐 Adzuna — International", value=False)
 
@@ -1415,7 +1502,7 @@ with st.sidebar:
 
     expand_queries = st.checkbox(
         "🔄 Expand search queries", value=True,
-        help="Search related keyword variations automatically",
+        help="Auto-expand custom keywords with related variations",
     )
 
     location_filter = st.selectbox(
@@ -1423,7 +1510,7 @@ with st.sidebar:
         ["All", "Timișoara", "Romania", "Remote", "Europe"],
     )
 
-    min_match = st.slider("Minimum match %", 0, 100, 25, 5)
+    min_match = st.slider("Minimum match %", 0, 100, 20, 5)
 
     romanian_filter = st.radio(
         "Romanian requirement",
@@ -1455,20 +1542,6 @@ with st.sidebar:
             st.session_state.profile["target_salary_min"] = new_sal_min
             st.session_state.profile["target_salary_max"] = new_sal_max
             st.toast("✅ Profile updated!")
-
-    st.divider()
-    st.subheader("💡 Suggested searches")
-    st.caption(
-        "• arabic customer support\n"
-        "• customer service english\n"
-        "• operations specialist\n"
-        "• back office\n"
-        "• financial operations\n"
-        "• accounts payable\n"
-        "• tax accounting\n"
-        "• logistics coordinator\n"
-        "• SAP Excel"
-    )
 
     st.divider()
     st.subheader("🔐 API status")
@@ -1510,9 +1583,24 @@ JOBS_PER_PAGE = 10
 if search_clicked:
     st.session_state.page_index = 0  # Reset pagination
 
+    # Determine which preset/queries to use
+    use_preset = ""
+    if not is_custom and not keywords.strip():
+        use_preset = selected_preset
+    elif keywords.strip():
+        use_preset = ""  # Custom keywords override preset
+
+    # Show what we're searching
+    if use_preset:
+        queries_display = CAREER_PRESETS.get(use_preset, [])
+        st.info(f"**Strategy:** {use_preset}\n\n**Queries:** {', '.join(queries_display)}")
+    else:
+        q = build_search_queries(keywords, preset="") if expand_queries else [keywords]
+        st.info(f"**Queries:** {', '.join(q)}")
+
     with st.status("Searching across sources...", expanded=True) as status:
         all_jobs, source_counts, search_errors = run_parallel_search(
-            keywords=keywords,
+            keywords=keywords if keywords.strip() else "operations",
             location=location,
             max_results=max_results,
             use_jooble=search_jooble,
@@ -1522,6 +1610,7 @@ if search_clicked:
             use_careerjet=search_careerjet,
             expand_queries=expand_queries,
             refresh_count=st.session_state.search_count,
+            preset=use_preset,
         )
 
         if source_counts:
