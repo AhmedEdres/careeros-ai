@@ -75,6 +75,7 @@ class MatchResult:
     remote: str = "not_remote"
     salary: Optional[SalaryInfo] = None
     adjustments: List[Tuple[str, int]] = field(default_factory=list)
+    blocking_languages: List[str] = field(default_factory=list)
 
     def as_dict(self) -> Dict:
         return {
@@ -85,6 +86,7 @@ class MatchResult:
             "confidence": self.confidence,
             "romanian": self.romanian,
             "remote": self.remote,
+            "blocking_languages": self.blocking_languages,
         }
 
 
@@ -375,11 +377,36 @@ def _score_experience(full: str, title: str, profile: Profile, result: MatchResu
     return min(score, DIMENSION_MAX["experience"])
 
 
-def _score_education(full: str, profile: Profile, result: MatchResult) -> int:
+# Boilerplate that mentions "legal" without the role being legal work.
+_LEGAL_BOILERPLATE = [
+    "legal requirements", "legal obligations", "legal regulations",
+    "legal framework", "legally required", "legal reasons", "legal basis",
+    "equal opportunity", "legally authorized", "legally authorised",
+    "legal working age", "legal entity", "legal notice", "in accordance with legal",
+]
+
+
+def _score_education(full: str, title: str, profile: Profile, result: MatchResult) -> int:
     edu = normalize_text(profile.education)
-    if contains_any(full, ["law", "legal", "juridic", "lawyer", "jurist", "paralegal"]) and "law" in edu:
-        result.reasons.append("🎓 Law/legal background is directly valued")
+    legal_terms = ["law", "legal", "juridic", "lawyer", "jurist", "paralegal", "counsel"]
+
+    # Only credit a legal background when the ROLE is legal — not when the ad
+    # merely says it complies with "legal requirements".
+    legal_in_title = contains_any(title, legal_terms)
+
+    # Strip boilerplate phrases before deciding whether "legal" is meaningful.
+    body_without_boilerplate = full
+    for phrase in _LEGAL_BOILERPLATE:
+        body_without_boilerplate = body_without_boilerplate.replace(normalize_text(phrase), " ")
+
+    legal_in_body = contains_any(body_without_boilerplate, legal_terms)
+
+    if "law" in edu and legal_in_title:
+        result.reasons.append("🎓 Legal role — your Law degree is directly relevant")
         return 5
+    if "law" in edu and legal_in_body:
+        result.reasons.append("🎓 Legal/compliance exposure — Law degree is an asset")
+        return 4
     if contains_any(full, ["master", "masters", "postgraduate"]):
         result.reasons.append("🎓 Master's degree relevant")
         return 4
@@ -423,6 +450,15 @@ def _score_salary(job: Dict, profile: Profile, result: MatchResult) -> int:
     return 0
 
 
+def required_foreign_languages(full: str, profile: Profile) -> List[str]:
+    """Languages the posting *requires* that the candidate does not speak."""
+    blocking = []
+    for language in profile.other_languages:
+        if classify_language_mention(full, language) == "required":
+            blocking.append(language)
+    return blocking
+
+
 def _score_relevance(full: str, result: MatchResult) -> int:
     if contains_any(full, ["bpo", "shared services", "shared service", "outsourcing",
                            "middle east", "mena", "gulf", "gcc"]):
@@ -459,7 +495,7 @@ def calculate_match(job: Dict, profile: Profile) -> MatchResult:
         "english": _score_english(full, result),
         "experience": _score_experience(full, title, profile, result),
         "salary": _score_salary(job, profile, result),
-        "education": _score_education(full, profile, result),
+        "education": _score_education(full, title, profile, result),
         "relevance": _score_relevance(full, result),
     }
     total = sum(dims.values())
@@ -482,6 +518,18 @@ def calculate_match(job: Dict, profile: Profile) -> MatchResult:
         total += MAX_ROMANIAN_PENALTY
         result.adjustments.append(("Advanced Romanian required", MAX_ROMANIAN_PENALTY))
         result.warnings.append("🔴 Advanced Romanian required")
+
+    # --- Languages the candidate does not speak ----------------------------
+    # A required French/German/Dutch posting is effectively closed to him, so
+    # it must never outrank a role he can actually get.
+    blocking_languages = required_foreign_languages(full, profile)
+    if blocking_languages:
+        names = ", ".join(lang.title() for lang in blocking_languages[:3])
+        penalty = -30 if len(blocking_languages) == 1 else -40
+        total += penalty
+        result.adjustments.append((f"Requires {names}", penalty))
+        result.warnings.insert(0, f"🔴 Requires fluent {names} — not in your profile")
+        result.blocking_languages = blocking_languages
 
     # --- Freshness nudge ---------------------------------------------------
     age_days = job.get("age_days")

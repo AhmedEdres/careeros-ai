@@ -289,6 +289,7 @@ class FilterOptions:
     romanian_filter: str = "Any"
     max_age_days: int = 0            # 0 == no limit
     only_with_salary: bool = False
+    hide_language_blocked: bool = False
     hide_applied: bool = False
     applied_urls: Sequence[str] = field(default_factory=list)
     sort_by: str = "Best match"
@@ -310,6 +311,7 @@ def score_and_filter(
         "filtered_romanian": 0,
         "filtered_age": 0,
         "filtered_salary": 0,
+        "filtered_language": 0,
         "filtered_applied": 0,
     }
     applied = {canonical_url(u) for u in options.applied_urls}
@@ -350,6 +352,10 @@ def score_and_filter(
 
         if options.only_with_salary and not (match.salary and match.salary.has_value):
             stats["filtered_salary"] += 1
+            continue
+
+        if options.hide_language_blocked and match.blocking_languages:
+            stats["filtered_language"] += 1
             continue
 
         if options.hide_applied and canonical_url(job.get("redirect_url", "")) in applied:

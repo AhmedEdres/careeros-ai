@@ -100,6 +100,7 @@ def current_filters() -> FilterOptions:
         romanian_filter=st.session_state.get("f_romanian", "Any"),
         max_age_days=st.session_state.get("f_max_age", 0),
         only_with_salary=st.session_state.get("f_salary_only", False),
+        hide_language_blocked=st.session_state.get("f_hide_lang", False),
         hide_applied=st.session_state.get("f_hide_applied", False),
         applied_urls=STORE.urls(),
         sort_by=st.session_state.get("f_sort", "Best match"),
@@ -114,6 +115,7 @@ def filter_signature() -> tuple:
         len(st.session_state.raw_jobs),
         options.min_score, options.location_filter, options.romanian_filter,
         options.max_age_days, options.only_with_salary, options.sort_by,
+        options.hide_language_blocked,
         options.hide_applied, len(STORE) if options.hide_applied else 0,
         PROFILE.target_salary_min, PROFILE.target_salary_max,
         PROFILE.romanian_level, PROFILE.location,
@@ -242,6 +244,11 @@ with st.sidebar:
         key="f_max_age", on_change=rescore_results,
     )
     st.checkbox("💰 Only jobs with a published salary", key="f_salary_only", on_change=rescore_results)
+    st.checkbox(
+        "🚫 Hide jobs requiring a language I don't speak",
+        key="f_hide_lang", on_change=rescore_results,
+        help="Excludes roles that require fluent French, German, Dutch, etc.",
+    )
     st.checkbox("🙈 Hide jobs I already applied to", key="f_hide_applied", on_change=rescore_results)
     st.selectbox(
         "Sort by", ["Best match", "Newest first", "Highest salary"],
@@ -410,8 +417,13 @@ def render_job_card(index: int, job: Dict) -> None:
             meta.append(f"🔁 seen on {job['duplicate_count']} boards")
         st.caption(" · ".join(m for m in meta if m))
 
+        if match.blocking_languages:
+            names = ", ".join(lang.title() for lang in match.blocking_languages)
+            st.error(f"🚫 **Requires fluent {names}** — not in your profile", icon="🚫")
         if match.warnings:
-            st.warning(" · ".join(match.warnings[:2]))
+            visible = [w for w in match.warnings if "not in your profile" not in w]
+            if visible:
+                st.warning(" · ".join(visible[:2]))
 
         tab_why, tab_score, tab_desc, tab_ai = st.tabs(
             ["✅ Why it matches", "📊 Breakdown", "📄 Description", "🤖 AI tools"]
@@ -527,6 +539,7 @@ if results:
             f"{stats.get('filtered_romanian', 0)} Romanian · "
             f"{stats.get('filtered_age', 0)} too old · "
             f"{stats.get('filtered_salary', 0)} no salary · "
+            f"{stats.get('filtered_language', 0)} language barrier · "
             f"{stats.get('filtered_applied', 0)} already applied"
         )
 

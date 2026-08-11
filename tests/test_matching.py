@@ -179,3 +179,67 @@ class TestScoring:
         a = calculate_match(onsite, Profile(open_to_relocation=False))
         b = calculate_match(onsite, Profile(open_to_relocation=True))
         assert b.score > a.score
+
+
+class TestForeignLanguageRequirements:
+    """Regression: a role requiring French/German must not rank as a top match.
+
+    Seen in production: "(fluent English & French) Customer Support Consultant"
+    scored 74% and ranked #1, despite French not being in the profile.
+    """
+
+    def test_required_french_is_heavily_penalised(self, profile):
+        job = make_job(
+            title="(fluent English & French) Customer Support Consultant",
+            location="Remote — Anywhere",
+            description="Fluent English and French required. Multilingual team.",
+        )
+        match = calculate_match(job, profile)
+        assert "french" in match.blocking_languages
+        assert match.score < 45, "a role he cannot get must not be high priority"
+        assert any("French" in w for w in match.warnings)
+
+    def test_language_as_a_plus_is_not_penalised(self, profile):
+        job = make_job(
+            title="Customer Support Agent",
+            description="English required. French is a plus. Arabic is a plus.",
+        )
+        match = calculate_match(job, profile)
+        assert match.blocking_languages == []
+
+    def test_penalised_below_equivalent_job_without_the_requirement(self, profile):
+        base = "Customer support role. Multilingual team. English required."
+        with_french = calculate_match(
+            make_job(title="Support Consultant", description=base + " French required."), profile
+        )
+        without = calculate_match(make_job(title="Support Consultant", description=base), profile)
+        assert with_french.score < without.score - 20
+
+    def test_multiple_missing_languages_penalised_more(self, profile):
+        one = calculate_match(make_job(description="German required."), profile)
+        two = calculate_match(make_job(description="German required. Dutch required."), profile)
+        assert two.score <= one.score
+
+    def test_speaking_language_is_not_blocking(self, profile):
+        match = calculate_match(make_job(description="Fluent English and Arabic required."), profile)
+        assert match.blocking_languages == []
+
+
+class TestLegalBoilerplate:
+    """Regression: "we comply with legal requirements" awarded a Law-degree bonus."""
+
+    def test_boilerplate_does_not_award_education_points(self, profile):
+        job = make_job(
+            title="Customer Support Agent",
+            description="We comply with all legal requirements and data protection laws.",
+        )
+        assert calculate_match(job, profile).dimensions["education"] == 0
+
+    def test_genuine_legal_role_scores_full(self, profile):
+        job = make_job(title="Legal Compliance Officer", description="Contract review and legal advice.")
+        assert calculate_match(job, profile).dimensions["education"] == 5
+
+    def test_legal_adjacent_body_still_credited(self, profile):
+        job = make_job(title="Compliance Specialist",
+                       description="You will work with our legal counsel on contracts and litigation.")
+        assert calculate_match(job, profile).dimensions["education"] >= 4
