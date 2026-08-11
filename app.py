@@ -1230,11 +1230,11 @@ Be concise and specific to Ahmed's situation in the European job market."""
 # =========================================================
 CAREER_PRESETS = {
     "🔥 Full Career Scan (recommended)": [
-        "arabic customer support",
+        "operations coordinator",
         "financial operations",
         "back office",
         "accounts payable",
-        "operations coordinator",
+        "customer support",
         "compliance",
     ],
     "💰 Finance & Compliance": [
@@ -1244,21 +1244,24 @@ CAREER_PRESETS = {
         "accounting specialist",
         "compliance officer",
     ],
-    "🗣️ Arabic-Speaking Roles": [
-        "arabic customer support",
-        "arabic speaking",
-        "arabic english support",
-    ],
     "⚙️ Operations & Back Office": [
         "operations coordinator",
         "back office",
         "operations specialist",
         "shared services",
+        "order management",
     ],
-    "📞 Customer Support": [
+    "📞 Customer Support & BPO": [
         "customer support",
         "customer service",
         "client support",
+        "help desk",
+        "call center",
+    ],
+    "🗣️ Arabic-Speaking Roles": [
+        "arabic customer support",
+        "arabic speaking",
+        "arabic english",
     ],
     "📝 Custom keywords (type below)": [],
 }
