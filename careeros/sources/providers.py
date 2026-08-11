@@ -7,11 +7,12 @@ provider means writing one function and registering it in ``PROVIDERS``.
 from __future__ import annotations
 
 import time
+from functools import lru_cache
 from typing import Callable, Dict, List, Optional
 
 import requests
 
-from ..text import normalize_location, normalize_text, contains_any
+from ..text import normalize_location, normalize_text, contains_any, contains_phrase
 from .base import (
     DEFAULT_TIMEOUT,
     SourceResult,
@@ -71,13 +72,112 @@ def _timed(source: str, func, *args, **kwargs) -> SourceResult:
     return result
 
 
-def _keyword_filter(text_fields: str, keywords: str) -> bool:
-    """Client-side keyword filter for sources without a search parameter."""
-    words = [w for w in normalize_text(keywords).split() if len(w) >= 3]
-    if not words:
-        return True
+@lru_cache(maxsize=1)
+def _domain_anchors() -> tuple:
+    """Distinctive terms from the skill taxonomy used to keep relevant jobs.
+
+    Generic words ("support", "office", "client") are excluded: on their own
+    they let through "Office Cleaner" or "IT Support". Multi-word entries are
+    already specific enough to keep.
+    """
+    from ..profile import SKILL_GROUPS
+
+    too_generic = {
+        # Words that appear in unrelated jobs just as often as in relevant ones.
+        "support", "office", "client", "customer", "service", "warehouse",
+        "administration", "administrator", "coordinator", "risk", "credit",
+        "bank", "legal", "import", "export", "transport", "inventory",
+        "purchasing", "distribution", "shipping", "excel", "sql", "erp",
+        "oracle", "jira", "sharepoint", "salesforce", "arabic", "multilingual",
+        "bilingual", "uae", "saudi", "egypt", "gulf", "mena", "levant", "gcc",
+        "middle east", "case management", "data entry", "advisor", "partner",
+    }
+    # Terms specific enough to justify keeping a job on their own, even though
+    # the taxonomy alone would not surface them. Short acronyms are listed
+    # explicitly because the length guard below would otherwise drop them.
+    extra_anchors = {
+        "operations", "operational", "back office", "backoffice",
+        "aml", "kyc", "sap", "o2c", "p2p", "r2r", "bpo",
+    }
+
+    anchors = set(extra_anchors)
+    for group in SKILL_GROUPS.values():
+        for word in group["words"]:
+            normalized = normalize_text(word)
+            if normalized in too_generic or len(normalized) < 4:
+                continue
+            anchors.add(normalized)
+            if " " not in normalized:
+                anchors.update(_word_variants(normalized))
+    return tuple(sorted(anchors))
+
+
+def _word_variants(word: str) -> List[str]:
+    """Cheap morphological variants so 'accounting' also matches 'accountant'.
+
+    A real stemmer would be overkill here; job titles use a small, predictable
+    set of endings.
+    """
+    word = normalize_text(word)
+    if len(word) < 4:
+        return []
+    variants = {word + "s", word + "es"}
+    stem = word
+    for suffix in ("ing", "ance", "ence", "ment", "ions", "ion", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            stem = word[: -len(suffix)]
+            break
+    if stem != word:
+        variants.update({stem, stem + "s", stem + "ant", stem + "ants",
+                         stem + "ent", stem + "er", stem + "ers", stem + "or", stem + "ors"})
+    else:
+        variants.update({word + "ant", word + "ants", word + "er", word + "ers"})
+    return sorted(v for v in variants if v != word and len(v) >= 4)
+
+
+def _keyword_filter(text_fields: str, keywords: str, phrases: Optional[List[str]] = None) -> bool:
+    """Client-side keyword filter for sources without a search parameter.
+
+    Matching whole *phrases* rather than loose words is what keeps the quality
+    up: a bag-of-words filter accepts "Office Cleaner" for the query
+    "back office", because the single word "office" appears. Callers pass the
+    original query list so each phrase is tested as a unit.
+    """
     haystack = normalize_text(text_fields)
-    return contains_any(haystack, words)
+    candidates = [p for p in (phrases or []) if p and p.strip()]
+
+    if not candidates:
+        text = normalize_text(keywords).strip()
+        if not text:
+            return True
+        candidates = [text]
+
+    # 1. Exact phrase — the strongest signal ("back office", "accounts payable").
+    if contains_any(haystack, candidates):
+        return True
+
+    # 2. Domain anchors: distinctive terms that indicate the right career
+    #    track on their own. These are derived from the skill taxonomy the
+    #    scoring engine already uses, so the fetch filter and the ranking stay
+    #    consistent — a job the engine would rate highly is never dropped here.
+    #    This keeps titles like "Head of Operations", "Senior Accountant" or
+    #    "Payroll Officer" that an exact-phrase-only filter would discard.
+    if contains_any(haystack, _domain_anchors()):
+        return True
+
+    # 3. Two-word queries also match when both words appear anywhere
+    #    ("customer support" → "support agent for customers").
+    for phrase in candidates:
+        words = [w for w in normalize_text(phrase).split() if len(w) >= 4]
+        if len(words) < 2:
+            continue
+        if all(
+            contains_phrase(haystack, w) or contains_any(haystack, _word_variants(w))
+            for w in words
+        ):
+            return True
+
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +292,7 @@ def fetch_arbeitnow(
     keywords: str,
     limit: int = 20,
     session: Optional[requests.Session] = None,
+    phrases: Optional[List[str]] = None,
     **_,
 ) -> SourceResult:
     source = "Arbeitnow"
@@ -219,7 +320,7 @@ def fetch_arbeitnow(
                 break
             tags = item.get("tags") or []
             blob = f"{item.get('title','')} {item.get('company_name','')} {item.get('description','')} {' '.join(map(str, tags))}"
-            if not _keyword_filter(blob, keywords):
+            if not _keyword_filter(blob, keywords, phrases):
                 continue
             is_remote = bool(item.get("remote"))
             loc = str(item.get("location") or "").strip()
@@ -247,6 +348,7 @@ def fetch_jobicy(
     keywords: str,
     limit: int = 20,
     session: Optional[requests.Session] = None,
+    phrases: Optional[List[str]] = None,
     **_,
 ) -> SourceResult:
     source = "Jobicy"
@@ -270,7 +372,7 @@ def fetch_jobicy(
             if not isinstance(item, dict) or len(jobs) >= limit:
                 break
             blob = f"{item.get('jobTitle','')} {item.get('companyName','')} {item.get('jobExcerpt','')} {item.get('jobDescription','')}"
-            if not _keyword_filter(blob, keywords):
+            if not _keyword_filter(blob, keywords, phrases):
                 continue
             geo_label = item.get("jobGeo") or "Worldwide"
             salary_min = item.get("annualSalaryMin")

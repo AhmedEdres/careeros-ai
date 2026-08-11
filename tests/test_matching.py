@@ -167,9 +167,14 @@ class TestScoring:
         assert any("Entry-level" in w for w in match.warnings)
 
     def test_priority_band(self):
-        assert "HIGH" in priority_band(80)[0]
-        assert "WORTH" in priority_band(50)[0]
-        assert "LOW" in priority_band(10)[0]
+        from careeros.matching import HIGH_PRIORITY_THRESHOLD, MEDIUM_PRIORITY_THRESHOLD
+
+        assert "HIGH" in priority_band(HIGH_PRIORITY_THRESHOLD)[0]
+        assert "HIGH" in priority_band(100)[0]
+        assert "WORTH" in priority_band(MEDIUM_PRIORITY_THRESHOLD)[0]
+        assert "WORTH" in priority_band(HIGH_PRIORITY_THRESHOLD - 1)[0]
+        assert "LOW" in priority_band(MEDIUM_PRIORITY_THRESHOLD - 1)[0]
+        assert "LOW" in priority_band(0)[0]
 
     def test_profile_changes_affect_score(self):
         job = make_job(location="Remote — Germany", description="operations role")
@@ -243,3 +248,70 @@ class TestLegalBoilerplate:
         job = make_job(title="Compliance Specialist",
                        description="You will work with our legal counsel on contracts and litigation.")
         assert calculate_match(job, profile).dimensions["education"] >= 4
+
+
+class TestScoreNormalisation:
+    """Scores are rescaled against the points a posting could actually award.
+
+    Seen in production: only 1 of 112 matches reached "high priority", because
+    Arabic (15) and salary (10) are absent from most ads, capping a perfect
+    local job at ~70/100 and flattening the ranking.
+    """
+
+    def test_excellent_local_job_reaches_high_priority(self, profile):
+        job = make_job(
+            title="Back Office Specialist",
+            location="Timisoara, Romania",
+            description=(
+                "Back office operations, invoicing, SAP and Excel. "
+                "English required. 5 years experience. University degree."
+            ),
+        )
+        match = calculate_match(job, profile)
+        assert match.score >= 80, "a perfect local match must be high priority"
+        assert match.normalised is True
+
+    def test_job_mentioning_everything_is_not_normalised(self, profile):
+        job = make_job(
+            title="Arabic Customer Support Specialist",
+            location="Timisoara, Romania",
+            description="Arabic required. English required. Salary 6500 RON per month.",
+            salary_text="6500 RON per month",
+        )
+        match = calculate_match(job, profile)
+        assert match.normalised is False
+        assert match.score >= 80
+
+    def test_weak_job_stays_low_after_normalisation(self, profile):
+        job = make_job(title="Assistant", location="Berlin, Germany",
+                       description="General assistant work.")
+        assert calculate_match(job, profile).score < 45
+
+    def test_ordering_is_preserved(self, profile):
+        strong = calculate_match(make_job(
+            title="Operations Coordinator", location="Timisoara, Romania",
+            description="Operations, SAP, Excel, invoicing. English required."), profile)
+        weak = calculate_match(make_job(
+            title="Assistant", location="Berlin, Germany", description="Assistant."), profile)
+        assert strong.score > weak.score
+
+    def test_penalties_survive_normalisation(self, profile):
+        """A French requirement must still sink the score after rescaling."""
+        job = make_job(
+            title="Operations Coordinator", location="Timisoara, Romania",
+            description="Operations and invoicing. English and French required.",
+        )
+        match = calculate_match(job, profile)
+        assert match.score < 80, "a blocking language must prevent high priority"
+
+    def test_score_never_exceeds_100(self, profile):
+        job = make_job(
+            title="Senior Arabic Operations Compliance Manager",
+            location="Timisoara, Romania",
+            description=("Arabic required English required romanian is a plus " * 20
+                         + "SAP Excel invoicing compliance logistics. Salary 9000 RON per month. "
+                           "Master degree in law. BPO shared services MENA."),
+            salary_text="9000 RON per month",
+            age_days=1,
+        )
+        assert 0 <= calculate_match(job, profile).score <= 100

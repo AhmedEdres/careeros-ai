@@ -182,3 +182,84 @@ class TestProviderRegistry:
     def test_free_providers_need_no_keys(self):
         assert PROVIDERS["remotive"].needs_keys == []
         assert PROVIDERS["arbeitnow"].needs_keys == []
+
+
+class TestKeywordFilterQuality:
+    """The client-side filter decides what Arbeitnow/Jobicy even return.
+
+    Regression: it used to match loose single words, so the query
+    "back office" accepted "Office Cleaner" and flooded the results with
+    irrelevant jobs.
+    """
+
+    PHRASES = [
+        "operations coordinator", "financial operations", "back office",
+        "accounts payable", "customer support", "compliance officer",
+    ]
+
+    def _filter(self, title):
+        from careeros.sources.providers import _keyword_filter
+        return _keyword_filter(title, " ".join(self.PHRASES), self.PHRASES)
+
+    @pytest.mark.parametrize("title", [
+        "Head of Operations",
+        "Chief Financial Officer",
+        "Customer Support Specialist",
+        "Back Office Assistant",
+        "Accounts Payable Clerk",
+        "Senior Accountant",
+        "Tax Compliance Analyst",
+        "Accounting Assistant",
+        "Payroll Officer",
+        "Invoicing Specialist",
+        "AML KYC Analyst",
+        "SAP Consultant",
+        "Collections Specialist",
+        "BPO Team Lead",
+    ])
+    def test_relevant_titles_are_kept(self, title):
+        assert self._filter(title), f"{title!r} is relevant and must not be dropped"
+
+    @pytest.mark.parametrize("title", [
+        "Office Cleaner",          # the original false positive
+        "Nurse",
+        "Truck Driver",
+        "Frontend Developer",
+        "Barista",
+        "Security Guard",
+        "Software Engineer",
+        "Graphic Designer",
+        "Warehouse Picker",
+        "IT Support Engineer",
+        "Marketing Manager",
+        "Personal Trainer",
+    ])
+    def test_irrelevant_titles_are_dropped(self, title):
+        assert not self._filter(title), f"{title!r} is irrelevant and must be dropped"
+
+    def test_empty_query_keeps_everything(self):
+        from careeros.sources.providers import _keyword_filter
+        assert _keyword_filter("Anything at all", "")
+
+    def test_single_word_query_still_works(self):
+        from careeros.sources.providers import _keyword_filter
+        assert _keyword_filter("Logistics Coordinator", "logistics")
+
+    def test_phrases_are_passed_through_by_the_planner(self):
+        """Whole-board sources must receive the queries as separate phrases."""
+        from unittest.mock import patch
+        from careeros.search import SearchRequest, run_search
+        from careeros.sources.base import SourceResult
+
+        captured = {}
+
+        def spy(key, **kwargs):
+            captured[key] = kwargs
+            return SourceResult(source=key, jobs=[])
+
+        with patch("careeros.search.fetch_source", side_effect=spy):
+            run_search(SearchRequest(keywords="customer support",
+                                     sources=["arbeitnow"], expand_queries=True))
+
+        assert isinstance(captured["arbeitnow"].get("phrases"), list)
+        assert len(captured["arbeitnow"]["phrases"]) > 1

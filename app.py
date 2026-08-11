@@ -15,7 +15,12 @@ import streamlit as st
 from careeros import __version__
 from careeros.ai import AIClient, MODELS
 from careeros.export import applications_to_csv, jobs_to_csv, jobs_to_markdown
-from careeros.matching import DIMENSION_MAX, priority_band
+from careeros.matching import (
+    DIMENSION_MAX,
+    HIGH_PRIORITY_THRESHOLD,
+    MEDIUM_PRIORITY_THRESHOLD,
+    priority_band,
+)
 from careeros.profile import CEFR_ORDER, Profile
 from careeros.salary import format_salary
 from careeros.search import (
@@ -518,8 +523,11 @@ def render_job_card(index: int, job: Dict) -> None:
 
 
 if results:
-    high = sum(1 for j in results if j["_match"].score >= 70)
-    medium = sum(1 for j in results if 45 <= j["_match"].score < 70)
+    high = sum(1 for j in results if j["_match"].score >= HIGH_PRIORITY_THRESHOLD)
+    medium = sum(
+        1 for j in results
+        if MEDIUM_PRIORITY_THRESHOLD <= j["_match"].score < HIGH_PRIORITY_THRESHOLD
+    )
     fresh = sum(1 for j in results if isinstance(j.get("age_days"), (int, float)) and j["age_days"] <= 7)
 
     m1, m2, m3, m4, m5 = st.columns(5)

@@ -76,6 +76,8 @@ class MatchResult:
     salary: Optional[SalaryInfo] = None
     adjustments: List[Tuple[str, int]] = field(default_factory=list)
     blocking_languages: List[str] = field(default_factory=list)
+    normalised: bool = False
+    attainable: int = 100
 
     def as_dict(self) -> Dict:
         return {
@@ -189,11 +191,21 @@ def classify_remote_geography(location_text: str, description_text: str) -> str:
     return "good"
 
 
+HIGH_PRIORITY_THRESHOLD = 80
+MEDIUM_PRIORITY_THRESHOLD = 55
+
+
 def priority_band(score: int, confidence: str = "medium") -> Tuple[str, str]:
-    """Map a score to a (label, colour) badge."""
-    if score >= 70:
+    """Map a score to a (label, band) badge.
+
+    Thresholds sit at 80/55 because scores are normalised against the
+    attainable points: a strong local match now genuinely reaches the 80s, so a
+    lower bar would mark almost everything "high priority" and tell the user
+    nothing.
+    """
+    if score >= HIGH_PRIORITY_THRESHOLD:
         return "🔥 HIGH PRIORITY", "high"
-    if score >= 45:
+    if score >= MEDIUM_PRIORITY_THRESHOLD:
         return "🟡 WORTH A LOOK", "medium"
     return "⚪ LOW PRIORITY", "low"
 
@@ -545,6 +557,29 @@ def calculate_match(job: Dict, profile: Profile) -> MatchResult:
             total -= 3
             result.adjustments.append(("Posting older than 45 days", -3))
             result.warnings.append("⚠️ Listing is over 45 days old — may be filled")
+
+    # --- Normalise against what was actually knowable ----------------------
+    # Arabic and salary are rarely mentioned at all. Scoring them out of the
+    # full 100 pushed genuinely excellent local jobs down to ~70%, so almost
+    # nothing reached "high priority" and the ranking lost its meaning.
+    # Dimensions that carry no signal in the posting are therefore excluded
+    # from the denominator: the score becomes "how well does this match on the
+    # evidence available", which is what the user actually needs to compare.
+    unknown = 0
+    if dims["arabic"] == 0 and not contains_any(full, ["arabic", "multilingual", "bilingual"]):
+        unknown += DIMENSION_MAX["arabic"]
+    if dims["salary"] == 0 and not (result.salary and result.salary.has_value):
+        unknown += DIMENSION_MAX["salary"]
+
+    attainable = sum(DIMENSION_MAX.values()) - unknown
+    if attainable > 0 and unknown:
+        base = sum(dims.values())
+        adjustments = total - base
+        # Rescale the earned points onto the full 0-100 range, then re-apply
+        # the bonuses/penalties so they keep their intended weight.
+        total = (base / attainable) * 100 + adjustments
+        result.normalised = True
+        result.attainable = attainable
 
     result.confidence = _confidence(desc, job)
     result.dimensions = dims

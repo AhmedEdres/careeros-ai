@@ -243,10 +243,13 @@ def run_search(request: SearchRequest, max_workers: int = 8) -> SearchReport:
         if spec.client_side_filter:
             # These providers download the whole board and filter locally, so
             # calling them once per query would re-download identical payloads.
-            # One call with the union of keywords is both faster and kinder to
-            # the free APIs.
-            combined = " ".join(queries)
-            tasks.append((key, build_kwargs(key, combined, request.limit_per_source * 2)))
+            # One call is faster and kinder to the free APIs — but it must
+            # receive the queries as separate PHRASES, otherwise a merged
+            # keyword string degrades into a bag of words and lets unrelated
+            # jobs through ("Office Cleaner" for "back office").
+            kwargs = build_kwargs(key, " ".join(queries), request.limit_per_source * 2)
+            kwargs["phrases"] = list(queries)
+            tasks.append((key, kwargs))
         else:
             for query in queries:
                 tasks.append((key, build_kwargs(key, query, request.limit_per_source)))
