@@ -1,4 +1,2 @@
-streamlit
-pandas
-requests
-beautifulsoup4
+streamlit>=1.36
+requests>=2.31
