@@ -1,0 +1,378 @@
+"""Search orchestration: query expansion, parallel fetching, dedup, ranking."""
+
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Sequence, Tuple
+
+from .matching import MatchResult, calculate_match, hard_filter_job
+from .profile import Profile
+from .sources import PROVIDERS, SourceResult, build_session, fetch_source
+from .text import canonical_url, normalize_text, safe_company_name, text_hash
+
+__all__ = [
+    "CAREER_PRESETS",
+    "SearchRequest",
+    "SearchReport",
+    "build_search_queries",
+    "deduplicate_jobs",
+    "run_search",
+    "score_and_filter",
+]
+
+
+CAREER_PRESETS: Dict[str, List[str]] = {
+    "🔥 Full Career Scan (recommended)": [
+        "operations coordinator",
+        "financial operations",
+        "back office",
+        "accounts payable",
+        "customer support",
+        "compliance officer",
+    ],
+    "💰 Finance & Compliance": [
+        "financial operations",
+        "tax compliance",
+        "accounts payable",
+        "accounting specialist",
+        "compliance officer",
+        "aml kyc analyst",
+    ],
+    "⚙️ Operations & Back Office": [
+        "operations coordinator",
+        "back office",
+        "operations specialist",
+        "shared services",
+        "order management",
+    ],
+    "📞 Customer Support & BPO": [
+        "customer support",
+        "customer service",
+        "client support",
+        "help desk",
+        "call center",
+    ],
+    "🗣️ Arabic-Speaking Roles": [
+        "arabic customer support",
+        "arabic speaking",
+        "arabic english",
+        "arabic advisor",
+    ],
+    "📝 Custom keywords": [],
+}
+
+_EXPANSIONS = {
+    "customer support": ["customer service", "client support", "arabic customer support"],
+    "customer service": ["customer support", "customer care", "arabic customer service"],
+    "operations": ["operations coordinator", "operations specialist", "back office operations"],
+    "accounting": ["accounts payable", "accounts receivable", "bookkeeper"],
+    "finance": ["financial operations", "financial analyst", "financial compliance"],
+    "back office": ["back office operations", "shared services", "data entry"],
+    "tax": ["tax compliance", "tax specialist", "tax accounting"],
+    "compliance": ["compliance officer", "aml kyc", "regulatory compliance"],
+    "arabic": ["arabic customer support", "arabic speaking", "arabic operations"],
+    "sap": ["sap specialist", "erp specialist", "sap operations"],
+    "logistics": ["supply chain", "warehouse coordinator", "freight forwarding"],
+    "legal": ["legal assistant", "paralegal", "contract administrator"],
+}
+
+MAX_QUERIES = 6
+
+
+@dataclass
+class SearchRequest:
+    keywords: str = ""
+    location: str = "Timisoara"
+    preset: str = ""
+    limit_per_source: int = 20
+    sources: Sequence[str] = field(default_factory=lambda: ["jooble", "remotive", "arbeitnow", "jobicy"])
+    expand_queries: bool = True
+    secrets: Dict[str, str] = field(default_factory=dict)
+
+    def resolved_queries(self) -> List[str]:
+        preset_queries = CAREER_PRESETS.get(self.preset) or []
+        if preset_queries and not self.keywords.strip():
+            return preset_queries[:MAX_QUERIES]
+        return build_search_queries(self.keywords or "operations", self.expand_queries)
+
+
+@dataclass
+class SearchReport:
+    jobs: List[Dict] = field(default_factory=list)
+    results: List[SourceResult] = field(default_factory=list)
+    queries: List[str] = field(default_factory=list)
+    raw_count: int = 0
+    duplicates_removed: int = 0
+
+    @property
+    def errors(self) -> List[str]:
+        seen, out = set(), []
+        for res in self.results:
+            if res.error and res.error not in seen:
+                seen.add(res.error)
+                out.append(res.error)
+        return out
+
+    @property
+    def counts_by_source(self) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for res in self.results:
+            if res.count:
+                counts[res.source] = counts.get(res.source, 0) + res.count
+        return counts
+
+    @property
+    def timings(self) -> Dict[str, int]:
+        timings: Dict[str, int] = {}
+        for res in self.results:
+            timings[res.source] = max(timings.get(res.source, 0), res.elapsed_ms)
+        return timings
+
+
+def build_search_queries(base_keywords: str, expand: bool = True) -> List[str]:
+    """Expand a keyword phrase into a small set of related queries."""
+    base = (base_keywords or "").strip()
+    if not base:
+        return ["operations"]
+    queries = [base]
+    if expand:
+        lowered = normalize_text(base)
+        for key, extras in _EXPANSIONS.items():
+            if key in lowered:
+                queries.extend(extras)
+                break
+
+    seen, unique = set(), []
+    for query in queries:
+        marker = normalize_text(query)
+        if marker and marker not in seen:
+            seen.add(marker)
+            unique.append(query)
+    return unique[:MAX_QUERIES]
+
+
+def _job_identity(job: Dict) -> Tuple[str, str]:
+    """Return (url_key, content_key) used for deduplication."""
+    url_key = canonical_url(job.get("redirect_url", ""))
+    title = normalize_text(job.get("title", ""))
+    company = normalize_text(safe_company_name(job.get("company")))
+    # Only the city matters: "Timisoara" vs "Timisoara, Timis County".
+    location = normalize_text(str((job.get("location") or {}).get("display_name", "")))
+    location_token = location.split(",")[0].strip()
+    content_key = text_hash(f"{title}|{company}|{location_token}")
+    return url_key, content_key
+
+
+def deduplicate_jobs(jobs: List[Dict]) -> Tuple[List[Dict], int]:
+    """Collapse duplicates, keeping the richest record and merging sources."""
+    by_key: Dict[str, Dict] = {}
+    order: List[str] = []
+    url_to_key: Dict[str, str] = {}
+    removed = 0
+
+    for job in jobs:
+        url_key, content_key = _job_identity(job)
+        key = url_to_key.get(url_key) if url_key else None
+        if key is None:
+            key = content_key
+        if url_key:
+            url_to_key[url_key] = key
+
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = job
+            order.append(key)
+            continue
+
+        removed += 1
+        # Keep whichever record carries more information.
+        richer, poorer = (
+            (job, existing)
+            if len(str(job.get("description", ""))) > len(str(existing.get("description", "")))
+            else (existing, job)
+        )
+        merged = dict(richer)
+        merged["salary_text"] = richer.get("salary_text") or poorer.get("salary_text", "")
+        merged["salary_min"] = richer.get("salary_min") if richer.get("salary_min") is not None else poorer.get("salary_min")
+        merged["salary_max"] = richer.get("salary_max") if richer.get("salary_max") is not None else poorer.get("salary_max")
+        merged["posted_at"] = richer.get("posted_at") or poorer.get("posted_at", "")
+        if merged.get("age_days") is None:
+            merged["age_days"] = poorer.get("age_days")
+        sources = {
+            str(richer.get("source", "")).split(" / ")[0],
+            str(poorer.get("source", "")).split(" / ")[0],
+        }
+        merged["source"] = " + ".join(sorted(s for s in sources if s))
+        merged["duplicate_count"] = int(existing.get("duplicate_count", 1)) + 1
+        by_key[key] = merged
+
+    return [by_key[k] for k in order], removed
+
+
+def run_search(request: SearchRequest, max_workers: int = 8) -> SearchReport:
+    """Fetch every (query × source) combination in parallel."""
+    queries = request.resolved_queries()
+    secrets = request.secrets or {}
+    session = build_session()
+
+    def build_kwargs(key: str, query: str, limit: int) -> Dict[str, object]:
+        spec = PROVIDERS[key]
+        kwargs: Dict[str, object] = {
+            "keywords": query,
+            "limit": limit,
+            "session": session,
+        }
+        if spec.supports_location:
+            kwargs["location"] = request.location
+        if key == "jooble":
+            kwargs["api_key"] = secrets.get("JOOBLE_API_KEY", "")
+            kwargs["pages"] = 2
+        elif key == "adzuna":
+            kwargs["app_id"] = secrets.get("ADZUNA_APP_ID", "")
+            kwargs["app_key"] = secrets.get("ADZUNA_APP_KEY", "")
+        elif key == "careerjet":
+            kwargs["affid"] = secrets.get("CAREERJET_AFFID", "")
+        return kwargs
+
+    tasks = []
+    for key in request.sources:
+        spec = PROVIDERS.get(key)
+        if spec is None:
+            continue
+        if spec.client_side_filter:
+            # These providers download the whole board and filter locally, so
+            # calling them once per query would re-download identical payloads.
+            # One call with the union of keywords is both faster and kinder to
+            # the free APIs.
+            combined = " ".join(queries)
+            tasks.append((key, build_kwargs(key, combined, request.limit_per_source * 2)))
+        else:
+            for query in queries:
+                tasks.append((key, build_kwargs(key, query, request.limit_per_source)))
+
+    report = SearchReport(queries=queries)
+    if not tasks:
+        report.results.append(SourceResult(source="none", error="No search sources selected."))
+        return report
+
+    # Drop identical (source, query) pairs that expansion may have produced.
+    seen_signatures = set()
+    deduped_tasks = []
+    for key, kwargs in tasks:
+        signature = (key, normalize_text(str(kwargs.get("keywords", ""))))
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+        deduped_tasks.append((key, kwargs))
+
+    all_jobs: List[Dict] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(fetch_source, key, **kwargs): key
+            for key, kwargs in deduped_tasks
+        }
+        for future in as_completed(futures):
+            result = future.result()
+            report.results.append(result)
+            all_jobs.extend(result.jobs)
+
+    report.raw_count = len(all_jobs)
+    report.jobs, report.duplicates_removed = deduplicate_jobs(all_jobs)
+    return report
+
+
+@dataclass
+class FilterOptions:
+    min_score: int = 20
+    location_filter: str = "All"
+    romanian_filter: str = "Any"
+    max_age_days: int = 0            # 0 == no limit
+    only_with_salary: bool = False
+    hide_applied: bool = False
+    applied_urls: Sequence[str] = field(default_factory=list)
+    sort_by: str = "Best match"
+
+
+def score_and_filter(
+    jobs: List[Dict],
+    profile: Profile,
+    options: FilterOptions,
+) -> Tuple[List[Dict], Dict[str, int]]:
+    """Hard-filter, score, soft-filter and sort. Returns (jobs, stats)."""
+    from .profile import LOCATION_SYNONYMS
+    from .text import contains_any
+
+    stats = {
+        "rejected_hard": 0,
+        "below_score": 0,
+        "filtered_location": 0,
+        "filtered_romanian": 0,
+        "filtered_age": 0,
+        "filtered_salary": 0,
+        "filtered_applied": 0,
+    }
+    applied = {canonical_url(u) for u in options.applied_urls}
+    kept: List[Dict] = []
+
+    for job in jobs:
+        keep, reason = hard_filter_job(job, profile)
+        if not keep:
+            stats["rejected_hard"] += 1
+            continue
+
+        match = calculate_match(job, profile)
+        job["_match"] = match
+
+        if match.score < options.min_score:
+            stats["below_score"] += 1
+            continue
+
+        if options.location_filter != "All":
+            synonyms = LOCATION_SYNONYMS.get(options.location_filter, [])
+            location_text = normalize_text(str((job.get("location") or {}).get("display_name", "")))
+            if synonyms and not contains_any(location_text, synonyms):
+                stats["filtered_location"] += 1
+                continue
+
+        if options.romanian_filter == "Exclude Romanian-required" and match.romanian in ("reject", "risky"):
+            stats["filtered_romanian"] += 1
+            continue
+        if options.romanian_filter == "Beginner-friendly only" and match.romanian == "reject":
+            stats["filtered_romanian"] += 1
+            continue
+
+        if options.max_age_days:
+            age = job.get("age_days")
+            if isinstance(age, (int, float)) and age > options.max_age_days:
+                stats["filtered_age"] += 1
+                continue
+
+        if options.only_with_salary and not (match.salary and match.salary.has_value):
+            stats["filtered_salary"] += 1
+            continue
+
+        if options.hide_applied and canonical_url(job.get("redirect_url", "")) in applied:
+            stats["filtered_applied"] += 1
+            continue
+
+        kept.append(job)
+
+    confidence_rank = {"high": 2, "medium": 1, "low": 0}
+    if options.sort_by == "Newest first":
+        kept.sort(key=lambda j: (
+            j.get("age_days") if isinstance(j.get("age_days"), (int, float)) else 999,
+            -j["_match"].score,
+        ))
+    elif options.sort_by == "Highest salary":
+        kept.sort(key=lambda j: (
+            -((j["_match"].salary.monthly_ron_mid if j["_match"].salary and j["_match"].salary.has_value else 0) or 0),
+            -j["_match"].score,
+        ))
+    else:  # Best match
+        kept.sort(key=lambda j: (
+            -j["_match"].score,
+            -confidence_rank.get(j["_match"].confidence, 0),
+            j.get("age_days") if isinstance(j.get("age_days"), (int, float)) else 999,
+        ))
+    return kept, stats
