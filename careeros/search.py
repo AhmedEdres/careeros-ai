@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from .matching import MatchResult, calculate_match, hard_filter_job
 from .profile import Profile
+from .tracks import DEFAULT_TRACK, resolve_track
 from .sources import PROVIDERS, SourceResult, build_session, fetch_source
 from .text import canonical_url, normalize_text, safe_company_name, text_hash
 
@@ -59,6 +60,14 @@ CAREER_PRESETS: Dict[str, List[str]] = {
         "arabic english",
         "arabic advisor",
     ],
+    "🏭 Logistics & Production": [
+        "logistics coordinator",
+        "warehouse coordinator",
+        "supply chain",
+        "production planner",
+        "production operator",
+        "quality inspector",
+    ],
     "📝 Custom keywords": [],
 }
 
@@ -74,6 +83,8 @@ _EXPANSIONS = {
     "arabic": ["arabic customer support", "arabic speaking", "arabic operations"],
     "sap": ["sap specialist", "erp specialist", "sap operations"],
     "logistics": ["supply chain", "warehouse coordinator", "freight forwarding"],
+    "production": ["production operator", "production planner", "quality inspector"],
+    "warehouse": ["warehouse coordinator", "inventory controller", "forklift"],
     "legal": ["legal assistant", "paralegal", "contract administrator"],
 }
 
@@ -296,6 +307,7 @@ class FilterOptions:
     hide_applied: bool = False
     applied_urls: Sequence[str] = field(default_factory=list)
     sort_by: str = "Best match"
+    track: str = DEFAULT_TRACK
 
 
 def score_and_filter(
@@ -319,14 +331,15 @@ def score_and_filter(
     }
     applied = {canonical_url(u) for u in options.applied_urls}
     kept: List[Dict] = []
+    track = resolve_track(getattr(options, "track", "") or "")
 
     for job in jobs:
-        keep, reason = hard_filter_job(job, profile)
+        keep, reason = hard_filter_job(job, profile, track)
         if not keep:
             stats["rejected_hard"] += 1
             continue
 
-        match = calculate_match(job, profile)
+        match = calculate_match(job, profile, track)
         job["_match"] = match
 
         if match.score < options.min_score:

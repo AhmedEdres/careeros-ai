@@ -129,6 +129,23 @@ SKILL_GROUPS: Dict[str, Dict] = {
             "transport", "transportation", "purchasing", "procurement",
             "shipping", "freight", "forwarding", "distribution",
             "fulfillment", "fulfilment", "customs", "import", "export",
+            "logistics coordinator", "warehouse coordinator",
+            "supply chain coordinator", "material planner",
+        ],
+    },
+    "production": {
+        "label": "Production / Manufacturing",
+        "weight": 10,
+        "words": [
+            "production", "manufacturing", "assembly", "assembler",
+            "production operator", "machine operator", "process operator",
+            "quality control", "quality assurance", "quality inspector",
+            "injection", "molding", "moulding", "plastics", "extrusion",
+            "shift leader", "production planner", "production planner",
+            "operator productie", "productie", "fabricatie",
+            "linia de productie", "warehouse operator",
+            "stivuitor", "cnc operator",
+            "production technician", "process technician",
         ],
     },
     "tools": {
@@ -166,6 +183,7 @@ NEGATIVE_TITLES = [
     "medical doctor", "nurse", "asistent medical", "dentist", "pharmacist",
     "truck driver", "sofer", "construction worker", "electrician",
     "plumber", "mechanic", "welder", "sudor", "lacatus", "operator cnc",
+    "cnc operator",
     "chef", "bucatar", "waiter", "ospatar", "barista", "security guard",
     "agent de securitate", "cleaner", "femeie de serviciu",
 ]

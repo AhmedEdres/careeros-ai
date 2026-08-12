@@ -22,6 +22,7 @@ from careeros.matching import (
     priority_band,
 )
 from careeros.profile import CEFR_ORDER, Profile
+from careeros.tracks import DEFAULT_TRACK, track_weights
 from careeros.salary import format_salary
 from careeros.search import (
     CAREER_PRESETS,
@@ -103,6 +104,7 @@ def init_session() -> None:
         "last_signature": None,
         "has_searched": False,
         "toast_queue": [],
+        "career_track": DEFAULT_TRACK,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -134,6 +136,7 @@ def current_filters() -> FilterOptions:
         hide_applied=st.session_state.get("f_hide_applied", False),
         applied_urls=STORE.urls(),
         sort_by=st.session_state.get("f_sort", "Best match"),
+        track=st.session_state.get("career_track", DEFAULT_TRACK),
     )
 
 
@@ -157,6 +160,7 @@ def filter_signature() -> tuple:
         PROFILE.target_salary_min, PROFILE.target_salary_max,
         PROFILE.romanian_level, PROFILE.location,
         PROFILE.experience_years, PROFILE.open_to_relocation,
+        st.session_state.get("career_track", DEFAULT_TRACK),
     )
 
 
@@ -230,8 +234,12 @@ with st.sidebar:
         "Career track",
         list(CAREER_PRESETS.keys()),
         index=0,
-        help="A preset runs several related queries at once. Pick 'Custom keywords' to type your own.",
+        help="A preset runs several related queries at once and changes how every job is scored. Pick 'Custom keywords' to type your own.",
     )
+    if preset != st.session_state.get("career_track"):
+        st.session_state.career_track = preset
+        # Re-score cached results for the new weight table.
+        st.session_state.last_signature = None
     is_custom = "Custom" in preset
     keywords = st.text_input(
         "Keywords" if is_custom else "Keywords (override the preset)",
@@ -440,9 +448,14 @@ def render_job_card(index: int, job: Dict) -> None:
             st.markdown(f"### {index}. {title}")
             st.markdown(f"**{company}** · 📍 {job_location}")
         with badge:
-            st.metric("Match", f"{match.score}%", label)
+            st.metric("Overall", f"{match.score}%", label)
             if is_applied:
                 st.success("✅ Applied", icon="✅")
+
+        s1, s2, s3 = st.columns(3)
+        s1.metric("Match", f"{getattr(match, 'match_score', match.score)}%")
+        s2.metric("Eligibility", f"{getattr(match, 'eligibility_score', 0)}%")
+        s3.metric("Hiring reality", f"{getattr(match, 'hiring_score', 0)}%")
 
         st.progress(match.score / 100)
 
@@ -467,8 +480,8 @@ def render_job_card(index: int, job: Dict) -> None:
             if visible:
                 st.warning(" · ".join(visible[:2]))
 
-        tab_why, tab_score, tab_desc, tab_ai = st.tabs(
-            ["✅ Why it matches", "📊 Breakdown", "📄 Description", "🤖 AI tools"]
+        tab_why, tab_score, tab_hire, tab_desc, tab_ai = st.tabs(
+            ["✅ Why it matches", "📊 Breakdown", "🎯 Hiring reality", "📄 Description", "🤖 AI tools"]
         )
 
         with tab_why:
@@ -488,11 +501,51 @@ def render_job_card(index: int, job: Dict) -> None:
                 "english": "🇬🇧 English", "experience": "🧑‍💼 Experience",
                 "salary": "💰 Salary", "education": "🎓 Education", "relevance": "🌐 Relevance",
             }
+            weights = track_weights(getattr(match, "track", "") or st.session_state.get("career_track"))
             cols = st.columns(4)
             for i, (dim, value) in enumerate(match.dimensions.items()):
-                cols[i % 4].metric(dim_labels.get(dim, dim), f"{value}/{DIMENSION_MAX.get(dim, 10)}")
+                cap = weights.get(dim, DIMENSION_MAX.get(dim, 10))
+                cols[i % 4].metric(dim_labels.get(dim, dim), f"{value}/{cap}")
             if match.adjustments:
-                st.caption("Adjustments: " + ", ".join(f"{name} ({value:+d})" for name, value in match.adjustments))
+                st.caption("Adjustments: " + ", ".join(
+                    f"{name}" + (f" ({value:+d})" if value else "")
+                    for name, value in match.adjustments
+                ))
+            st.caption(
+                f"Overall {match.score}% = 40% match ({getattr(match, 'match_score', 0)}) "
+                f"+ 35% eligibility ({getattr(match, 'eligibility_score', 0)}) "
+                f"+ 25% hiring ({getattr(match, 'hiring_score', 0)})"
+            )
+
+        with tab_hire:
+            h1, h2, h3 = st.columns(3)
+            h1.metric("Match", f"{getattr(match, 'match_score', 0)}%")
+            h2.metric("Eligibility", f"{getattr(match, 'eligibility_score', 0)}%")
+            h3.metric("Hiring reality", f"{getattr(match, 'hiring_score', 0)}%")
+            st.markdown(
+                "Hiring reality asks **would a recruiter shortlist you**, not just "
+                "whether the keywords overlap. Eligibility asks whether you can "
+                "legally and practically take the job."
+            )
+            hire_reasons = getattr(match, "hiring_reasons", []) or []
+            hire_risks = getattr(match, "hiring_risks", []) or []
+            elig_reasons = getattr(match, "eligibility_reasons", []) or []
+            if hire_reasons:
+                st.markdown("**Why a recruiter would look at you**")
+                for item in hire_reasons:
+                    st.markdown(f"- {item}")
+            if hire_risks:
+                st.markdown("**Why they might pass**")
+                for item in hire_risks:
+                    st.markdown(f"- {item}")
+            if elig_reasons:
+                st.markdown("**Eligibility**")
+                for item in elig_reasons:
+                    st.markdown(f"- {item}")
+            if getattr(match, "romanian_pressure", None):
+                st.caption(f"Romanian pressure for this track × location: {match.romanian_pressure:.2f}×")
+            if not hire_reasons and not hire_risks and not elig_reasons:
+                st.info("Not enough evidence in the listing to judge hiring reality.")
 
         with tab_desc:
             description = clean_html_text(job.get("description", ""))
@@ -631,23 +684,18 @@ else:
     with st.expander("How the matching works", expanded=True):
         st.markdown(
             """
-Each job is scored out of 100 from **positive evidence only** — a missing detail
-scores zero rather than granting free points:
+Each job gets **three scores**, blended 40 / 35 / 25 into the ranking:
 
-| Dimension | Max | What earns points |
+| Score | Weight | Question it answers |
 |---|---|---|
-| 📍 Location | 20 | Your city > Romania > EU-eligible remote |
-| 💼 Skills | 25 | Operations, finance/compliance, logistics, tools |
-| 🗣️ Arabic | 15 | Required > preferred > a plus > mentioned |
-| 🇬🇧 English | 10 | Required > preferred > mentioned |
-| 🧑‍💼 Experience | 10 | Seniority in the title vs. years requested |
-| 💰 Salary | 10 | Parsed and converted to RON/month |
-| 🎓 Education | 5 | Law/legal or degree requirements |
-| 🌐 Relevance | 5 | BPO, shared services, MENA exposure |
+| **Match** | 40% | Does this job suit your skills? Weights change with the career track. |
+| **Eligibility** | 35% | Can you legally and practically take it (location, languages, Romanian)? |
+| **Hiring reality** | 25% | Would a recruiter actually shortlist you? |
 
-Jobs requiring advanced Romanian, or remote roles restricted to another region,
-are rejected before scoring. Fresh postings get a small boost; listings older
-than 45 days are penalised.
+A weak match cannot be propped up by "no legal barriers". Romanian is graded:
+*a plus* costs nothing; an unspecified *Romanian required* is a risk, not an
+automatic reject. Pick **Logistics & Production** in the sidebar to score
+warehouse / manufacturing roles the way the Timișoara market actually hires.
             """
         )
 

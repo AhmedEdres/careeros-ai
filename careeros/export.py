@@ -18,7 +18,8 @@ def jobs_to_csv(jobs: List[Dict], applied_urls: Iterable[str] = ()) -> str:
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "Rank", "Match %", "Confidence", "Title", "Company", "Location",
+        "Rank", "Overall %", "Match %", "Eligibility %", "Hiring reality %",
+        "Confidence", "Title", "Company", "Location",
         "Source", "Posted (days ago)", "Salary (published)",
         "Salary (≈RON/month)", "Romanian requirement", "Warnings",
         "Applied", "Link",
@@ -34,6 +35,9 @@ def jobs_to_csv(jobs: List[Dict], applied_urls: Iterable[str] = ()) -> str:
         writer.writerow([
             index,
             getattr(match, "score", 0),
+            getattr(match, "match_score", getattr(match, "score", 0)),
+            getattr(match, "eligibility_score", ""),
+            getattr(match, "hiring_score", ""),
             getattr(match, "confidence", ""),
             job.get("title", ""),
             safe_company_name(job.get("company")),
@@ -74,8 +78,12 @@ def jobs_to_markdown(jobs: List[Dict], limit: int = 25) -> str:
     for index, job in enumerate(jobs[:limit], start=1):
         match = job.get("_match")
         score = getattr(match, "score", 0)
-        lines.append(f"## {index}. {job.get('title', 'Untitled')} — {score}%")
+        match_s = getattr(match, "match_score", score)
+        elig_s = getattr(match, "eligibility_score", "")
+        hire_s = getattr(match, "hiring_score", "")
+        lines.append(f"## {index}. {job.get('title', 'Untitled')} — {score}% overall")
         lines.append("")
+        lines.append(f"- **Scores:** match {match_s}% · eligibility {elig_s}% · hiring reality {hire_s}%")
         lines.append(f"- **Company:** {safe_company_name(job.get('company'))}")
         lines.append(f"- **Location:** {(job.get('location') or {}).get('display_name', 'n/a')}")
         lines.append(f"- **Source:** {job.get('source', 'n/a')}")

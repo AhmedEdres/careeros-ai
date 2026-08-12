@@ -91,6 +91,8 @@ def _domain_anchors() -> tuple:
         "oracle", "jira", "sharepoint", "salesforce", "arabic", "multilingual",
         "bilingual", "uae", "saudi", "egypt", "gulf", "mena", "levant", "gcc",
         "middle east", "case management", "data entry", "advisor", "partner",
+        "picker", "packer", "forklift", "production", "operator", "assembly",
+        "manufacturing", "quality", "technician", "plastics", "injection",
     }
     # Terms specific enough to justify keeping a job on their own, even though
     # the taxonomy alone would not surface them. Short acronyms are listed

@@ -157,3 +157,19 @@ def test_engine_version_is_exposed():
     at = AppTest.from_file(APP_PATH, default_timeout=120).run()
     captions = " ".join(c.value for c in at.caption)
     assert "engine" in captions, "the engine fingerprint should be visible for diagnosis"
+
+
+def test_job_card_shows_three_scores():
+    at = run_app_with_results()
+    assert not at.exception
+    labels = [m.label for m in at.metric]
+    assert "Match" in labels
+    assert "Eligibility" in labels
+    assert "Hiring reality" in labels
+
+
+def test_logistics_track_is_in_sidebar():
+    at = AppTest.from_file(APP_PATH, default_timeout=120).run()
+    assert not at.exception
+    radios = " ".join(str(r.options) for r in at.radio)
+    assert "Logistics & Production" in radios

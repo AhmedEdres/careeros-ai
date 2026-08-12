@@ -95,16 +95,22 @@ class TestRemoteGeography:
     def test_not_remote(self):
         assert classify_remote_geography("Timisoara, Romania", "office based") == "not_remote"
 
-    def test_excellent_for_europe(self):
-        assert classify_remote_geography("Remote — Europe", "") == "excellent"
+    def test_europe_wide_is_remote_eu(self):
+        assert classify_remote_geography("Remote — Europe", "") == "remote_eu"
+        assert classify_remote_geography("Remote — EU", "") == "remote_eu"
+
+    def test_romania_remote_is_remote_country(self):
+        assert classify_remote_geography("Remote — Romania", "") == "remote_country"
 
     def test_restricted(self):
         assert classify_remote_geography("Remote", "Must be based in the US") == "restricted"
 
-    def test_deutschland_is_not_eu_substring_bug(self):
-        # "eu" must not match inside "Deutschland"; it is still EU by country name.
-        assert classify_remote_geography("Remote — Deutschland", "") == "excellent"
-        assert classify_remote_geography("Remote — Neuchatel", "") in ("good", "excellent")
+    def test_single_foreign_country_is_unclear(self):
+        # "Remote — Greece" is the Greek labour market, not EU-wide eligibility.
+        # "eu" must also not match inside "Deutschland".
+        assert classify_remote_geography("Remote — Greece", "") == "remote_unclear"
+        assert classify_remote_geography("Remote — Deutschland", "") == "remote_unclear"
+        assert classify_remote_geography("Remote — Neuchatel", "") == "remote_unclear"
 
 
 class TestScoring:
