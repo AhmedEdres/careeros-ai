@@ -4,10 +4,21 @@ The package holds all business logic (pure Python, unit-tested) while
 ``app.py`` contains only the Streamlit presentation layer.
 """
 
-__version__ = "3.0.0"
+__version__ = "4.0.0"
 
 from .profile import DEFAULT_PROFILE, Profile
 from .matching import MatchResult, calculate_match, hard_filter_job, priority_band
+from .tracks import (
+    ALL_TRACKS,
+    DEFAULT_TRACK,
+    TRACK_ARABIC,
+    TRACK_CUSTOM,
+    TRACK_FINANCE,
+    TRACK_FULL,
+    TRACK_LOGISTICS,
+    TRACK_OPERATIONS,
+    TRACK_SUPPORT,
+)
 from .salary import SalaryInfo, format_salary, parse_salary
 from .search import (
     CAREER_PRESETS,
@@ -41,4 +52,13 @@ __all__ = [
     "Application",
     "ApplicationStore",
     "STATUS_FLOW",
+    "ALL_TRACKS",
+    "DEFAULT_TRACK",
+    "TRACK_FULL",
+    "TRACK_FINANCE",
+    "TRACK_OPERATIONS",
+    "TRACK_SUPPORT",
+    "TRACK_ARABIC",
+    "TRACK_LOGISTICS",
+    "TRACK_CUSTOM",
 ]

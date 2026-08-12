@@ -1,12 +1,21 @@
-"""Matching engine v3 — evidence-based, explainable job scoring.
+"""Matching engine v4 — three scores, career-track-aware weighting.
 
-Design rules
-------------
+The engine answers "what gives this candidate the highest realistic
+probability of being hired in Romania/the EU?", not merely "what matches
+the CV?". Three separate scores are blended 40 / 35 / 25:
+
+* **Match** — does the job suit his skills (weights depend on the track)
+* **Eligibility** — can he legally and practically take it
+* **Hiring** — would a recruiter realistically shortlist him
+
+A weak fit cannot be propped up by the absence of legal barriers: when
+match < 50 the eligibility+hiring contribution is capped.
+
+Design rules carried over from v3
+---------------------------------
 * **Zero-default**: a dimension only earns points on positive evidence.
-* **Confidence-aware**: short listings (snippets) cannot be judged as harshly
-  as full descriptions, so the final score is reported together with a
-  confidence level instead of pretending a 120-character snippet is complete.
-* **Explainable**: every dimension returns the evidence that produced it.
+* **Confidence-aware**: short listings cannot be judged as harshly as full ads.
+* **Explainable**: every score returns the evidence that produced it.
 * **Whole-word matching**: prevents "eu" matching "Deutschland".
 """
 
@@ -37,39 +46,56 @@ from .text import (
     normalize_text,
     safe_company_name,
 )
+from .tracks import (
+    BASE_DIMENSION_MAX,
+    DEFAULT_TRACK,
+    LOGISTICS_ALLOWED_TITLES,
+    TRACK_LOGISTICS,
+    dimension_max as track_dimension_max,
+    resolve_track,
+    romanian_pressure,
+    skill_multiplier,
+    track_weights,
+)
 
 __all__ = [
     "MatchResult",
     "DIMENSION_MAX",
+    "BLEND_WEIGHTS",
     "calculate_match",
     "hard_filter_job",
     "classify_language_mention",
     "classify_romanian_requirement",
     "classify_remote_geography",
     "priority_band",
+    "blend_scores",
 ]
 
-DIMENSION_MAX = {
-    "location": 20,
-    "skills": 25,
-    "arabic": 15,
-    "english": 10,
-    "experience": 10,
-    "salary": 10,
-    "education": 5,
-    "relevance": 5,
-}
+DIMENSION_MAX = dict(BASE_DIMENSION_MAX)
 
 MAX_ROMANIAN_BONUS = 5
 MAX_ROMANIAN_PENALTY = -12
+
+# Overall ranking = 40% match + 35% eligibility + 25% hiring reality.
+BLEND_WEIGHTS = {"match": 0.40, "eligibility": 0.35, "hiring": 0.25}
+WEAK_MATCH_THRESHOLD = 50
+# When match < 50, eligibility+hiring may contribute at most this many
+# overall points, so a 9% match with "no legal barriers" scores 32, not 52.
+WEAK_MATCH_OTHER_CAP = 28
 
 
 @dataclass
 class MatchResult:
     score: int = 0
+    match_score: int = 0
+    eligibility_score: int = 0
+    hiring_score: int = 0
     dimensions: Dict[str, int] = field(default_factory=dict)
     reasons: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    eligibility_reasons: List[str] = field(default_factory=list)
+    hiring_reasons: List[str] = field(default_factory=list)
+    hiring_risks: List[str] = field(default_factory=list)
     confidence: str = "medium"
     romanian: str = "none"
     remote: str = "not_remote"
@@ -78,17 +104,26 @@ class MatchResult:
     blocking_languages: List[str] = field(default_factory=list)
     normalised: bool = False
     attainable: int = 100
+    track: str = DEFAULT_TRACK
+    romanian_pressure: float = 1.0
 
     def as_dict(self) -> Dict:
         return {
             "score": self.score,
+            "match_score": self.match_score,
+            "eligibility_score": self.eligibility_score,
+            "hiring_score": self.hiring_score,
             "dimensions": self.dimensions,
             "reasons": self.reasons,
             "warnings": self.warnings,
+            "eligibility_reasons": self.eligibility_reasons,
+            "hiring_reasons": self.hiring_reasons,
+            "hiring_risks": self.hiring_risks,
             "confidence": self.confidence,
             "romanian": self.romanian,
             "remote": self.remote,
             "blocking_languages": self.blocking_languages,
+            "track": self.track,
         }
 
 
@@ -213,14 +248,22 @@ def priority_band(score: int, confidence: str = "medium") -> Tuple[str, str]:
 # ---------------------------------------------------------------------------
 # Hard filter
 # ---------------------------------------------------------------------------
-def hard_filter_job(job: Dict, profile: Profile) -> Tuple[bool, str]:
-    """Reject hopeless listings before scoring. Returns (keep, reason)."""
+def hard_filter_job(job: Dict, profile: Profile, track: str = "") -> Tuple[bool, str]:
+    """Reject hopeless listings before scoring. Returns (keep, reason).
+
+    Advanced Romanian and non-EU remote restrictions stay hard stops.
+    Wrong-track titles are track-aware: a CNC operator is rejected on the
+    finance track but kept on Logistics & Production.
+    """
     full, title, loc, desc = _job_text(job)
+    resolved = resolve_track(track)
 
     if not str(job.get("title", "")).strip():
         return False, "Missing title"
 
-    # 1. Romanian far above the candidate's level.
+    # 1. Romanian far above the candidate's level (C1/C2/fluent/native).
+    #    Graded "Romanian required" is *not* a hard stop — that lives in
+    #    the eligibility score.
     if profile.romanian_rank < 4 and contains_any(full, ROMANIAN_REJECT):
         return False, "🔴 Requires advanced Romanian (C1/C2/fluent/native)"
 
@@ -230,9 +273,11 @@ def hard_filter_job(job: Dict, profile: Profile) -> Tuple[bool, str]:
     if classify_remote_geography(loc, desc) == "restricted":
         return False, "🔴 Remote but restricted to a non-EU region"
 
-    # 3. Clearly different career track (title only — descriptions mention
-    #    unrelated teams too often to be trusted here).
-    wrong_track = matched_phrases(title, NEGATIVE_TITLES)
+    # 3. Clearly different career track (title only).
+    negatives = list(NEGATIVE_TITLES)
+    if resolved == TRACK_LOGISTICS:
+        negatives = [t for t in negatives if t not in LOGISTICS_ALLOWED_TITLES]
+    wrong_track = matched_phrases(title, negatives)
     if wrong_track:
         return False, f"🔴 Different career track ({wrong_track[0]})"
 
@@ -282,10 +327,10 @@ def _score_location(loc: str, desc: str, profile: Profile, result: MatchResult) 
     return 0
 
 
-def _score_skills(full: str, title: str, result: MatchResult) -> int:
-    total = 0
+def _score_skills(full: str, title: str, result: MatchResult, track: str = "") -> int:
+    total = 0.0
     labels: List[str] = []
-    for group in SKILL_GROUPS.values():
+    for key, group in SKILL_GROUPS.items():
         hits = matched_phrases(full, group["words"])
         if not hits:
             continue
@@ -294,13 +339,17 @@ def _score_skills(full: str, title: str, result: MatchResult) -> int:
         weight = group["weight"] + (3 if in_title else 0)
         # Multiple distinct hits inside a group add a little extra confidence.
         weight += min(len(hits) - 1, 2)
+        weight *= skill_multiplier(track, key)
         total += weight
         labels.append(group["label"])
 
-    capped = min(total, DIMENSION_MAX["skills"])
+    capped = int(round(min(total, BASE_DIMENSION_MAX["skills"])))
+    skills_max = track_dimension_max(track, "skills")
     if labels:
         result.reasons.append(
-            f"💼 Skills match: {', '.join(labels[:3])} ({capped}/{DIMENSION_MAX['skills']})"
+            f"💼 Skills match: {', '.join(labels[:3])} ({capped}/{BASE_DIMENSION_MAX['skills']}"
+            + (f", track cap {skills_max}" if skills_max != BASE_DIMENSION_MAX["skills"] else "")
+            + ")"
         )
     else:
         result.warnings.append("⚠️ No familiar skill keywords found in this listing")
@@ -493,16 +542,277 @@ def _confidence(description: str, job: Dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# v4: eligibility, hiring reality, blend
+# ---------------------------------------------------------------------------
+def _clamp(value: float, lo: int = 0, hi: int = 100) -> int:
+    return int(max(lo, min(hi, round(value))))
+
+
+def blend_scores(match: int, eligibility: int, hiring: int) -> int:
+    """40/35/25 blend with a weak-fit cap.
+
+    When match < 50 the eligibility+hiring contribution cannot exceed
+    ``WEAK_MATCH_OTHER_CAP`` overall points, so a 9% match with no legal
+    barriers scores 32 rather than 52.
+    """
+    other = BLEND_WEIGHTS["eligibility"] * eligibility + BLEND_WEIGHTS["hiring"] * hiring
+    if match < WEAK_MATCH_THRESHOLD:
+        other = min(other, WEAK_MATCH_OTHER_CAP)
+    return _clamp(BLEND_WEIGHTS["match"] * match + other)
+
+
+def _score_eligibility(
+    full: str,
+    loc: str,
+    desc: str,
+    profile: Profile,
+    result: MatchResult,
+    blocking: List[str],
+    pressure: float,
+) -> int:
+    """Can he legally and practically take this job? Absence of barriers is
+    *not* a large bonus — only positive evidence of access scores highly.
+    """
+    score = 16
+    notes: List[str] = []
+
+    if contains_phrase(loc, normalize_text(profile.location)) or contains_any(
+        loc, LOCATION_SYNONYMS.get("Timișoara", [])
+    ):
+        score += 42
+        notes.append("📍 On-site in your city — you can start without relocating")
+    elif contains_any(loc, LOCATION_SYNONYMS.get("Romania", [])):
+        score += 24
+        notes.append("🇷🇴 Romania-based — work authorisation is already in place")
+    elif result.remote == "excellent":
+        score += 30
+        notes.append("🏠 Remote and explicitly EU/Europe eligible")
+    elif result.remote == "good":
+        score += 12
+        notes.append("🏠 Remote, but EU eligibility is not spelled out")
+        result.warnings.append("⚠️ Remote without an explicit EU mention — confirm Romania is eligible")
+    elif result.remote == "restricted":
+        score -= 28
+        notes.append("🚫 Remote role is restricted to another region")
+    elif contains_any(loc, LOCATION_SYNONYMS.get("Europe", [])):
+        if profile.open_to_relocation:
+            score += 10
+            notes.append("🌍 EU on-site — reachable if you relocate")
+        else:
+            score += 4
+            notes.append("🌍 EU on-site but outside Romania")
+    elif not loc.strip():
+        score += 0
+        notes.append("⚠️ Location not stated — eligibility is unverified")
+    else:
+        score += 0
+        notes.append("⚠️ Location is outside your reachable area")
+
+    # Already living and working in Romania is the practical work-auth signal.
+    if profile.country and "romania" in normalize_text(profile.country):
+        score += 10
+        notes.append("🪪 You already live and work in Romania")
+
+    if blocking:
+        names = ", ".join(lang.title() for lang in blocking[:3])
+        score -= 42
+        notes.append(f"🚫 Requires fluent {names} — you cannot take this role")
+    else:
+        if len(desc) >= 80:
+            score += 12
+        if classify_language_mention(full, "english") == "required":
+            score += 8
+            notes.append("🇬🇧 Working language is English — you meet it")
+
+    romanian = result.romanian
+    if romanian == "friendly":
+        # Spec: "Romanian is a plus" costs nothing — and the explicit
+        # compatibility is a small positive signal of access.
+        score += 8
+        notes.append("🟢 Romanian optional/a plus — no eligibility cost")
+    elif romanian == "none":
+        pass
+    elif romanian == "risky":
+        gap = max(0, 4 - profile.romanian_rank)
+        penalty = int(round(14 * (gap / 4) * pressure)) if gap else int(round(4 * pressure))
+        score -= penalty
+        notes.append(
+            f"🟠 Unspecified Romanian requirement (pressure {pressure:.2f}) −{penalty}"
+        )
+        result.warnings.append("🟠 Romanian may be required — verify before applying")
+    elif romanian == "reject":
+        penalty = int(round(36 * pressure))
+        score -= penalty
+        notes.append(f"🔴 Advanced Romanian required −{penalty}")
+
+    result.eligibility_reasons = notes
+    return _clamp(score)
+
+
+def _title_track_alignment(title: str, track: str) -> int:
+    """How obviously the title belongs on the selected track. −10 … +18."""
+    finance = ["finance", "financial", "account", "tax", "compliance", "audit", "aml", "kyc"]
+    support = ["support", "service", "customer", "client", "help desk", "call center", "bpo"]
+    ops = ["operations", "coordinator", "back office", "administrator", "specialist"]
+    arabic = ["arabic"]
+    logistics = [
+        "logistics", "warehouse", "supply", "freight", "production", "operator",
+        "quality", "planner", "inventory", "shipping",
+    ]
+    tables = {
+        "💰 Finance & Compliance": finance,
+        "📞 Customer Support & BPO": support,
+        "⚙️ Operations & Back Office": ops,
+        "🗣️ Arabic-Speaking Roles": arabic + support,
+        "🏭 Logistics & Production": logistics,
+    }
+    words = tables.get(track)
+    if not words:
+        # Full scan / custom: any of the above is a mild positive.
+        if contains_any(title, finance + support + ops + logistics):
+            return 8
+        return 0
+    if contains_any(title, words):
+        return 16
+    # Wrong-family title on a focused track.
+    others = finance + support + logistics
+    if track.startswith("💰") and contains_any(title, ["production", "operator", "warehouse"]):
+        return -10
+    if track.startswith("🏭") and contains_any(title, finance) and not contains_any(title, logistics):
+        return -6
+    if contains_any(title, others) and not contains_any(title, words):
+        return -4
+    return 2
+
+
+def _score_hiring(
+    job: Dict,
+    profile: Profile,
+    full: str,
+    title: str,
+    loc: str,
+    result: MatchResult,
+    blocking: List[str],
+    pressure: float,
+    track: str,
+    match_dims: Dict[str, int],
+    match_score: int = 0,
+) -> int:
+    """Would a recruiter realistically shortlist him for this posting?"""
+    score = 26
+    reasons: List[str] = []
+    risks: List[str] = []
+
+    align = _title_track_alignment(title, track)
+    score += align
+    if align >= 12:
+        reasons.append("🎯 Title is a clean fit for the selected career track")
+    elif align <= -6:
+        risks.append("📉 Title does not look like the track a recruiter would search")
+
+    arabic = classify_language_mention(full, "arabic")
+    if arabic == "required":
+        score += 18
+        reasons.append("🗣️ Arabic is required — a native speaker is shortlisted immediately")
+    elif arabic in {"preferred", "plus"}:
+        score += 8
+        reasons.append("🗣️ Arabic is an advertised plus — you stand out")
+    elif arabic == "mentioned":
+        score += 4
+
+    if contains_phrase(loc, normalize_text(profile.location)) or contains_any(
+        loc, LOCATION_SYNONYMS.get("Timișoara", [])
+    ):
+        score += 10
+        reasons.append("📍 Local candidate — no relocation risk for the employer")
+    elif contains_any(loc, LOCATION_SYNONYMS.get("Romania", [])):
+        score += 5
+
+    required = _extract_required_years(full)
+    if required is not None:
+        if required <= profile.experience_years:
+            score += 6
+            reasons.append(f"✅ Asks for {required}+ years — you have {profile.experience_years}")
+        else:
+            score -= 8
+            risks.append(f"⚠️ Asks for {required}+ years of experience")
+
+    if contains_any(title, SENIORITY_PATTERNS["junior"]):
+        score -= 8
+        risks.append("⚠️ Junior/intern title — a recruiter will see you as overqualified")
+    elif contains_any(title, SENIORITY_PATTERNS["leadership"]) and profile.experience_years >= 8:
+        score += 5
+        reasons.append("🧑‍💼 Leadership title matches your seniority")
+
+    if blocking:
+        score -= 24
+        risks.append("🚫 A required language you do not speak ends the screening")
+
+    if result.romanian == "reject":
+        score -= 16
+        risks.append("🔴 Advanced Romanian will stop the recruiter at the first filter")
+    elif result.romanian == "risky":
+        hit = int(round(8 * pressure))
+        score -= hit
+        risks.append("🟠 Romanian is likely required — many RO recruiters will filter you out")
+
+    age = job.get("age_days")
+    if isinstance(age, (int, float)):
+        if age <= 3:
+            score += 4
+            reasons.append("🆕 Fresh posting — recruiters are still building a longlist")
+        elif age > 45:
+            score -= 6
+            risks.append("⚠️ Listing is over 45 days old — the role may already be filled")
+
+    skills_max = max(1, track_dimension_max(track, "skills"))
+    skills_frac = match_dims.get("skills", 0) / skills_max
+    if skills_frac >= 0.6:
+        score += 8
+    elif match_dims.get("skills", 0) == 0:
+        score -= 14
+        risks.append("📉 No overlapping skills a recruiter can tick off")
+
+    # EU-regulated finance/compliance often wants local (not Egyptian tax) exp.
+    if track.startswith("💰") and contains_any(title, ["compliance", "tax", "aml", "kyc"]):
+        score -= 6
+        risks.append("⚖️ EU-regulated finance roles often prefer local tax/compliance experience")
+
+    if match_score >= 80:
+        score += 10
+        reasons.append("📌 Strong skill match — the recruiter can tick the boxes")
+
+    result.hiring_reasons = reasons
+    result.hiring_risks = risks
+    return _clamp(score)
+
+
+def _scale_dimensions(raw: Dict[str, int], track: str) -> Dict[str, int]:
+    """Rescale v3-scale evidence onto the track's 100-point table."""
+    weights = track_weights(track)
+    scaled: Dict[str, int] = {}
+    for dim, value in raw.items():
+        old_max = BASE_DIMENSION_MAX.get(dim, 10)
+        new_max = weights.get(dim, old_max)
+        if old_max <= 0 or new_max <= 0:
+            scaled[dim] = 0
+        else:
+            scaled[dim] = int(round(min(new_max, (value / old_max) * new_max)))
+    return scaled
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
-def calculate_match(job: Dict, profile: Profile) -> MatchResult:
-    """Score a job against the profile and explain the result."""
+def calculate_match(job: Dict, profile: Profile, track: str = "") -> MatchResult:
+    """Score a job against the profile and explain the three v4 scores."""
+    resolved = resolve_track(track)
     full, title, loc, desc = _job_text(job)
-    result = MatchResult()
+    result = MatchResult(track=resolved)
 
-    dims = {
+    raw = {
         "location": _score_location(loc, desc, profile, result),
-        "skills": _score_skills(full, title, result),
+        "skills": _score_skills(full, title, result, resolved),
         "arabic": _score_arabic(full, result),
         "english": _score_english(full, result),
         "experience": _score_experience(full, title, profile, result),
@@ -510,78 +820,58 @@ def calculate_match(job: Dict, profile: Profile) -> MatchResult:
         "education": _score_education(full, title, profile, result),
         "relevance": _score_relevance(full, result),
     }
-    total = sum(dims.values())
 
-    # --- Romanian compatibility adjustment ---------------------------------
     romanian = classify_romanian_requirement(full)
     result.romanian = romanian
     if romanian == "friendly":
-        total += MAX_ROMANIAN_BONUS
-        result.adjustments.append(("Romanian beginner-friendly", MAX_ROMANIAN_BONUS))
         result.reasons.append("🟢 Romanian optional/beginner — compatible with your level")
-    elif romanian == "risky":
-        gap = max(0, 4 - profile.romanian_rank)  # 4 == B2
-        penalty = max(MAX_ROMANIAN_PENALTY, -3 * gap) if gap else 0
-        if penalty:
-            total += penalty
-            result.adjustments.append(("Romanian likely required", penalty))
-            result.warnings.append("🟠 Romanian may be required — verify before applying")
-    elif romanian == "reject":
-        total += MAX_ROMANIAN_PENALTY
-        result.adjustments.append(("Advanced Romanian required", MAX_ROMANIAN_PENALTY))
-        result.warnings.append("🔴 Advanced Romanian required")
+        result.adjustments.append(("Romanian beginner-friendly", 0))
 
-    # --- Languages the candidate does not speak ----------------------------
-    # A required French/German/Dutch posting is effectively closed to him, so
-    # it must never outrank a role he can actually get.
     blocking_languages = required_foreign_languages(full, profile)
     if blocking_languages:
         names = ", ".join(lang.title() for lang in blocking_languages[:3])
-        penalty = -30 if len(blocking_languages) == 1 else -40
-        total += penalty
-        result.adjustments.append((f"Requires {names}", penalty))
         result.warnings.insert(0, f"🔴 Requires fluent {names} — not in your profile")
         result.blocking_languages = blocking_languages
+        result.adjustments.append((f"Requires {names}", 0))
 
-    # --- Freshness nudge ---------------------------------------------------
-    age_days = job.get("age_days")
-    if isinstance(age_days, (int, float)):
-        if age_days <= 3:
-            total += 3
-            result.adjustments.append(("Posted in the last 3 days", 3))
-            result.reasons.append("🆕 Posted within the last 3 days")
-        elif age_days <= 7:
-            total += 1
-            result.adjustments.append(("Posted this week", 1))
-        elif age_days > 45:
-            total -= 3
-            result.adjustments.append(("Posting older than 45 days", -3))
-            result.warnings.append("⚠️ Listing is over 45 days old — may be filled")
+    pressure = romanian_pressure(resolved, loc, result.remote)
+    result.romanian_pressure = pressure
 
-    # --- Normalise against what was actually knowable ----------------------
-    # Arabic and salary are rarely mentioned at all. Scoring them out of the
-    # full 100 pushed genuinely excellent local jobs down to ~70%, so almost
-    # nothing reached "high priority" and the ranking lost its meaning.
-    # Dimensions that carry no signal in the posting are therefore excluded
-    # from the denominator: the score becomes "how well does this match on the
-    # evidence available", which is what the user actually needs to compare.
+    weights = track_weights(resolved)
+    dims = _scale_dimensions(raw, resolved)
+
+    # Normalise the Match score against evidence that was actually present.
+    # Arabic and salary are absent from most ads; leaving them in the
+    # denominator flattened every strong local job to ~70%.
     unknown = 0
-    if dims["arabic"] == 0 and not contains_any(full, ["arabic", "multilingual", "bilingual"]):
-        unknown += DIMENSION_MAX["arabic"]
-    if dims["salary"] == 0 and not (result.salary and result.salary.has_value):
-        unknown += DIMENSION_MAX["salary"]
+    if raw["arabic"] == 0 and not contains_any(full, ["arabic", "multilingual", "bilingual"]):
+        unknown += weights.get("arabic", 0)
+    if raw["salary"] == 0 and not (result.salary and result.salary.has_value):
+        unknown += weights.get("salary", 0)
 
-    attainable = sum(DIMENSION_MAX.values()) - unknown
+    attainable = sum(weights.values()) - unknown
+    match_points = sum(dims.values())
     if attainable > 0 and unknown:
-        base = sum(dims.values())
-        adjustments = total - base
-        # Rescale the earned points onto the full 0-100 range, then re-apply
-        # the bonuses/penalties so they keep their intended weight.
-        total = (base / attainable) * 100 + adjustments
+        match_total = (match_points / attainable) * 100
         result.normalised = True
         result.attainable = attainable
+    else:
+        match_total = match_points
+        result.attainable = sum(weights.values()) or 100
 
-    result.confidence = _confidence(desc, job)
+    match_score = _clamp(match_total)
+    eligibility_score = _score_eligibility(
+        full, loc, desc, profile, result, blocking_languages, pressure,
+    )
+    hiring_score = _score_hiring(
+        job, profile, full, title, loc, result,
+        blocking_languages, pressure, resolved, dims, match_score,
+    )
+
     result.dimensions = dims
-    result.score = int(max(0, min(100, round(total))))
+    result.match_score = match_score
+    result.eligibility_score = eligibility_score
+    result.hiring_score = hiring_score
+    result.score = blend_scores(match_score, eligibility_score, hiring_score)
+    result.confidence = _confidence(desc, job)
     return result

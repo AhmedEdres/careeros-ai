@@ -4,7 +4,7 @@ AI-powered job search, matching and application assistant for the Romanian &
 EU market. Searches several job boards at once, ranks every posting against
 your profile with an explainable score, and tracks your applications.
 
-![tests](https://img.shields.io/badge/tests-109%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-204%20passing-brightgreen)
 
 ---
 
@@ -38,32 +38,34 @@ and enabled by default. Adding a Jooble key unlocks the main Romanian source.
 
 ---
 
-## How the matching works
+## How the matching works (engine v4)
 
-Every job is scored out of 100 from **positive evidence only**: a missing
-detail scores zero instead of granting free points, so a half-empty listing can
-never outrank a genuinely good match.
+Every job gets **three scores**, blended **40 / 35 / 25** into the ranking.
+The question is no longer "what matches my CV?" but "what gives this candidate
+the highest realistic probability of being hired in Romania / the EU?".
 
-| Dimension | Max | What earns points |
+| Score | Weight | What it answers |
 |---|---|---|
-| 📍 Location | 20 | Your city > Romania > EU-eligible remote |
-| 💼 Skills | 25 | Operations, finance/compliance, logistics, tools (bonus when in the title) |
-| 🗣️ Arabic | 15 | Required > preferred > a plus > mentioned |
-| 🇬🇧 English | 10 | Required > preferred > mentioned |
-| 🧑‍💼 Experience | 10 | Seniority in the title vs. years requested |
-| 💰 Salary | 10 | Parsed from free text, converted to RON/month |
-| 🎓 Education | 5 | Law/legal background or degree requirements |
-| 🌐 Relevance | 5 | BPO, shared services, MENA exposure |
+| **Match** | 40% | Does the job suit your skills? The 100-point weight table changes with the career track. |
+| **Eligibility** | 35% | Can you legally and practically take it — location, work authorisation, languages, Romanian? |
+| **Hiring reality** | 25% | Would a recruiter actually shortlist you? |
 
-**Adjustments:** Romanian-friendly wording `+5`; Romanian likely required up to
-`-12` (scaled to how far it is above your level); posted in the last 3 days
-`+3`; older than 45 days `-3`.
+A weak match cannot be propped up by the absence of legal barriers: when Match
+is below 50 the other two scores are capped, so a 9% match cannot sneak up to
+52% overall.
 
-**Rejected before scoring:** advanced Romanian (C1/C2/native), remote roles
-restricted to another region, and clearly different career tracks.
+**Career tracks change the weights**, not just the search queries. Arabic is
+worth 30 points on the Arabic-speaking track and 8 on Logistics; education is
+worth 0 on Customer Support and 12 on Finance. A Bucharest finance role is
+1.35× more Romanian-dependent than a remote Arabic desk (0.5×).
 
-Each score comes with a **confidence level** — a 120-character snippet is
-labelled *low confidence* rather than being treated as a complete description.
+**Romanian is graded**, not binary. "Romanian is a plus" costs nothing; an
+unspecified "Romanian and English required" is a risk, not an automatic reject.
+Advanced C1/C2/fluent/native is still a hard filter.
+
+**Rejected before scoring:** advanced Romanian, remote roles restricted to
+another region, and titles on a clearly different career track (a CNC operator
+is kept on *Logistics & Production*).
 
 ---
 
@@ -71,6 +73,9 @@ labelled *low confidence* rather than being treated as a complete description.
 
 - **6 job sources in parallel** — Jooble, Remotive, Arbeitnow, Jobicy, Adzuna, Careerjet
 - **Smart deduplication** — the same posting from two boards is merged, keeping the richer description and both source names
+- **Three scores on every card** — Match, Eligibility, Hiring reality, blended 40/35/25
+- **Hiring reality tab** — why a recruiter would (or would not) shortlist you
+- **Logistics & Production track** — Timișoara manufacturing / warehouse weighting
 - **Instant filters** — match %, location, Romanian requirement, age, salary, already-applied. Re-filtering never re-hits the APIs
 - **Salary intelligence** — parses `3.500 - 5.000 RON/luna`, `€45k per year`, `$25/hour` and normalises everything to RON/month
 - **Application tracker** — status pipeline (Applied → Screening → Interview → Offer), notes, CSV export
@@ -86,7 +91,8 @@ careeros/
 ├── text.py           # normalisation, whole-word matching, URL canonicalisation
 ├── salary.py         # free-text salary parsing → RON/month
 ├── profile.py        # candidate model + keyword taxonomy
-├── matching.py       # scoring engine v3 (explainable, confidence-aware)
+├── matching.py       # scoring engine v4 (three scores, track-aware)
+├── tracks.py         # career-track weight tables and Romanian pressure
 ├── search.py         # query expansion, parallel fetch, dedup, filtering
 ├── tracker.py        # application store with safe persistence
 ├── ai.py             # Anthropic client (no SDK dependency)
@@ -95,7 +101,7 @@ careeros/
     ├── base.py       # HTTP session, retries, canonical job record
     └── providers.py  # one adapter per job board
 app.py                # Streamlit UI only
-tests/                # 109 tests
+tests/                # 204 tests
 ```
 
 Business logic is pure Python with no Streamlit imports, so it is fully
@@ -107,7 +113,7 @@ unit-testable and reusable outside the UI.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                       # 109 tests
+pytest                       # 204 tests
 pytest tests/test_app_ui.py  # UI regression tests
 ```
 
