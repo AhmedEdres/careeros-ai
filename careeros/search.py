@@ -59,8 +59,8 @@ CAREER_PRESETS: Dict[str, List[str]] = {
         "customer support",
         "customer service",
         "client support",
-        "help desk",
-        "call center",
+        "arabic customer support",
+        "shared services",
     ],
     "🗣️ Arabic-Speaking Roles": [
         "arabic customer support",

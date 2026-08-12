@@ -107,6 +107,11 @@ class MatchResult:
     attainable: int = 100
     track: str = DEFAULT_TRACK
     romanian_pressure: float = 1.0
+    verdict: str = "skip"
+    verdict_label: str = "🔴 SKIP"
+    apply_signals: List[str] = field(default_factory=list)
+    apply_risks: List[str] = field(default_factory=list)
+    reject_reason: str = ""
 
     def as_dict(self) -> Dict:
         return {
@@ -125,6 +130,11 @@ class MatchResult:
             "remote": self.remote,
             "blocking_languages": self.blocking_languages,
             "track": self.track,
+            "verdict": self.verdict,
+            "verdict_label": self.verdict_label,
+            "apply_signals": self.apply_signals,
+            "apply_risks": self.apply_risks,
+            "reject_reason": self.reject_reason,
         }
 
 
@@ -172,6 +182,7 @@ def classify_language_mention(text: str, lang: str) -> str:
         f"{lang} native", f"{lang} speaker", f"{lang} speaking",
         f"{lang} c1", f"{lang} c2", f"proficient in {lang}",
         f"excellent {lang}", f"must speak {lang}",
+        f"with {lang}", f"speak {lang}", f"{lang}-speaking",
     ]
     preferred = [
         f"{lang} preferred", f"{lang} is preferred", f"{lang} b2",
@@ -447,22 +458,52 @@ def classify_remote_geography(location_text: str, description_text: str) -> str:
 
 
 HIGH_PRIORITY_THRESHOLD = 80
-MEDIUM_PRIORITY_THRESHOLD = 55
+STRONG_APPLY_THRESHOLD = 70
+MEDIUM_PRIORITY_THRESHOLD = 60
+LOW_PRIORITY_THRESHOLD = 50
 
 
 def priority_band(score: int, confidence: str = "medium") -> Tuple[str, str]:
-    """Map a score to a (label, band) badge.
+    """Map a score to an apply / maybe / skip verdict.
 
-    Thresholds sit at 80/55 because scores are normalised against the
-    attainable points: a strong local match now genuinely reaches the 80s, so a
-    lower bar would mark almost everything "high priority" and tell the user
-    nothing.
+    80–100 APPLY immediately · 70–79 Strong application · 60–69 Consider
+    · 50–59 Low priority · <50 Skip.
     """
     if score >= HIGH_PRIORITY_THRESHOLD:
-        return "🔥 HIGH PRIORITY", "high"
+        return "🟢 APPLY", "apply"
+    if score >= STRONG_APPLY_THRESHOLD:
+        return "🟢 STRONG", "strong"
     if score >= MEDIUM_PRIORITY_THRESHOLD:
-        return "🟡 WORTH A LOOK", "medium"
-    return "⚪ LOW PRIORITY", "low"
+        return "🟡 MAYBE", "maybe"
+    if score >= LOW_PRIORITY_THRESHOLD:
+        return "🟠 LOW", "low"
+    return "🔴 SKIP", "skip"
+
+
+_SPECIALIZED_SENIOR_TITLE = [
+    "project manager", "programme manager", "program manager",
+    "head of logistics", "head of fulfillment", "head of fulfilment",
+    "logistics director", "fulfillment director",
+]
+
+
+def _is_specialized_senior_mismatch(title: str, full: str) -> bool:
+    """Senior specialised PM / EU logistics leadership he should not apply to."""
+    senior = contains_any(title, ["senior", "sr.", "head of", "director", "principal", "lead "])
+    specialised = contains_any(
+        title,
+        ["project manager", "programme manager", "program manager",
+         "fulfillment", "fulfilment", "supply chain manager"],
+    )
+    eu_exp = contains_any(full, [
+        "european experience", "eu experience", "experience in europe",
+        "years in logistics", "pmp ", "prince2", "agile project",
+    ])
+    if senior and specialised:
+        return True
+    if contains_any(title, _SPECIALIZED_SENIOR_TITLE) and (senior or eu_exp):
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +553,20 @@ def hard_filter_job(job: Dict, profile: Profile, track: str = "") -> Tuple[bool,
                 f"and not open to relocation"
             )
 
-    # 3. Clearly different career track (title only).
+    # 3. Required language the candidate does not speak — rejection, not a -5.
+    blocking = required_foreign_languages(full, profile)
+    if blocking:
+        names = ", ".join(lang.title() for lang in blocking[:3])
+        return False, f"🔴 {names} required — language mismatch"
+
+    # 4. Specialised senior PM / logistics leadership (not transferable).
+    if _is_specialized_senior_mismatch(title, full):
+        return False, (
+            "🔴 Senior specialised project / logistics leadership — "
+            "not a transferable-skills application"
+        )
+
+    # 5. Clearly different career track (title only).
     negatives = list(NEGATIVE_TITLES)
     if resolved == TRACK_LOGISTICS:
         negatives = [t for t in negatives if t not in LOGISTICS_ALLOWED_TITLES]
@@ -533,37 +587,37 @@ def _score_location(loc: str, desc: str, profile: Profile, result: MatchResult) 
 
     if home and contains_phrase(loc, home):
         result.reasons.append(f"📍 {profile.location} — perfect location match")
-        return 20
+        return 15
     if contains_any(loc, LOCATION_SYNONYMS["Timișoara"]):
         result.reasons.append("📍 Timișoara area — no relocation needed")
-        return 20
+        return 15
     if contains_any(loc, LOCATION_SYNONYMS["Romania"]):
         result.reasons.append("🇷🇴 Romania — same country, work authorisation OK")
-        return 15
+        return 12
 
     if remote_class == "remote_country":
         result.reasons.append("🏠 Remote — Romania explicitly eligible")
-        return 18
+        return 14
     if remote_class in {"remote_eu", "excellent"}:
         result.reasons.append("🏠 Remote — EU/Europe/worldwide eligible")
-        return 16
+        return 13
     if remote_class in {"remote_unclear", "good"}:
         result.reasons.append("🏠 Remote — but tied to another country, or eligibility not stated")
         result.warnings.append(
             "⚠️ Remote listing names a single foreign country (or none) — "
             "this is usually that country's labour market, not EU-wide"
         )
-        return 6
+        return 4
     if remote_class == "restricted":
         result.warnings.append("⚠️ Remote role restricted to another region")
-        return 2
+        return 1
 
     if contains_any(loc, LOCATION_SYNONYMS["Europe"]):
         if profile.open_to_relocation:
             result.reasons.append("🌍 Europe-based — relocation possible")
-            return 10
+            return 8
         result.warnings.append("⚠️ Outside Romania — would require relocation")
-        return 5
+        return 3
 
     if not loc.strip():
         result.warnings.append("⚠️ Location not stated in the listing")
@@ -605,19 +659,19 @@ def _score_arabic(full: str, result: MatchResult) -> int:
     level = classify_language_mention(full, "arabic")
     if level == "required":
         result.reasons.append("🗣️ Arabic required — your strongest differentiator")
-        return 15
+        return 20
     if level == "preferred":
         result.reasons.append("🗣️ Arabic preferred — strong advantage")
-        return 12
+        return 16
     if level == "plus":
         result.reasons.append("🗣️ Arabic is a plus")
-        return 10
+        return 12
     if level == "mentioned":
         result.reasons.append("🗣️ Arabic mentioned in the listing")
-        return 7
+        return 8
     if contains_any(full, ["multilingual", "bilingual", "mena", "middle east", "gulf"]):
         result.reasons.append("🌐 Multilingual/MENA context — Arabic is an asset")
-        return 4
+        return 5
     return 0
 
 
@@ -662,8 +716,14 @@ def _score_experience(full: str, title: str, profile: Profile, result: MatchResu
         score = 9
         result.reasons.append(f"🧑‍💼 Leadership role — fits {profile.experience_years}+ years")
     elif contains_any(title, SENIORITY_PATTERNS["senior"]):
-        score = 9
-        result.reasons.append("🧑‍💼 Senior level — matches your seniority")
+        if _is_specialized_senior_mismatch(title, full):
+            score = 2
+            result.warnings.append(
+                "⚠️ Senior specialised title — transferable experience is not enough"
+            )
+        else:
+            score = 9
+            result.reasons.append("🧑‍💼 Senior level — matches your seniority")
     elif contains_any(title, SENIORITY_PATTERNS["mid"]):
         score = 8
         result.reasons.append("🧑‍💼 Specialist/coordinator level — good fit")
@@ -769,10 +829,10 @@ def _score_relevance(full: str, result: MatchResult) -> int:
     if contains_any(full, ["bpo", "shared services", "shared service", "outsourcing",
                            "middle east", "mena", "gulf", "gcc"]):
         result.reasons.append("🌐 BPO / Shared services / MENA — high relevance to your background")
-        return 5
+        return 10
     if contains_any(full, ["multilingual", "bilingual", "international team", "global team"]):
         result.reasons.append("🌐 International/multilingual environment")
-        return 3
+        return 6
     return 0
 
 
@@ -1125,4 +1185,19 @@ def calculate_match(job: Dict, profile: Profile, track: str = "") -> MatchResult
     result.hiring_score = hiring_score
     result.score = blend_scores(match_score, eligibility_score, hiring_score)
     result.confidence = _confidence(desc, job)
+
+    if blocking_languages:
+        names = ", ".join(lang.title() for lang in blocking_languages[:3])
+        result.reject_reason = f"{names} required — language mismatch"
+        result.score = min(result.score, 35)
+        result.verdict_label, result.verdict = "🔴 SKIP", "skip"
+    elif _is_specialized_senior_mismatch(title, full):
+        result.reject_reason = "Senior specialised experience required"
+        result.score = min(result.score, 45)
+        result.verdict_label, result.verdict = priority_band(result.score)
+    else:
+        result.verdict_label, result.verdict = priority_band(result.score)
+
+    result.apply_signals = list(result.reasons[:8])
+    result.apply_risks = list(dict.fromkeys(result.warnings + result.hiring_risks))[:6]
     return result

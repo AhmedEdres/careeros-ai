@@ -132,7 +132,7 @@ def current_filters() -> FilterOptions:
         romanian_filter=st.session_state.get("f_romanian", "Any"),
         max_age_days=st.session_state.get("f_max_age", 0),
         only_with_salary=st.session_state.get("f_salary_only", False),
-        hide_language_blocked=st.session_state.get("f_hide_lang", False),
+        hide_language_blocked=st.session_state.get("f_hide_lang", True),
         hide_applied=st.session_state.get("f_hide_applied", False),
         applied_urls=STORE.urls(),
         sort_by=st.session_state.get("f_sort", "Best match"),
@@ -250,7 +250,7 @@ with st.sidebar:
     limit_per_source = st.slider("Results per source", 5, 50, 20, 5)
     expand_queries = st.checkbox(
         "🔄 Expand keywords automatically", value=True,
-        help="Adds related search terms, e.g. 'customer support' → 'client support'.",
+        help="Widens discovery only. Extra keywords never inflate the fit score.",
     )
 
     st.divider()
@@ -295,8 +295,9 @@ with st.sidebar:
     st.checkbox("💰 Only jobs with a published salary", key="f_salary_only", on_change=rescore_results)
     st.checkbox(
         "🚫 Hide jobs requiring a language I don't speak",
+        value=True,
         key="f_hide_lang", on_change=rescore_results,
-        help="Excludes roles that require fluent French, German, Dutch, etc.",
+        help="Hard-rejects Dutch/German/French/etc. These are not scored down — they are removed.",
     )
     st.checkbox("🙈 Hide jobs I already applied to", key="f_hide_applied", on_change=rescore_results)
     st.selectbox(
@@ -452,7 +453,7 @@ def render_job_card(index: int, job: Dict) -> None:
             st.markdown(f"### {index}. {title}")
             st.markdown(f"**{company}** · 📍 {job_location}")
         with badge:
-            st.metric("Overall", f"{match.score}%", label)
+            st.metric(getattr(match, "verdict_label", label), f"{match.score}%")
             if is_applied:
                 st.success("✅ Applied", icon="✅")
 
@@ -480,9 +481,26 @@ def render_job_card(index: int, job: Dict) -> None:
             meta.append(f"🌍 same role posted for {job['variant_count']} countries{extra}")
         st.caption(" · ".join(m for m in meta if m))
 
+        if getattr(match, "reject_reason", ""):
+            st.error(f"**Rejected / skip:** {match.reject_reason}")
         if match.blocking_languages:
             names = ", ".join(lang.title() for lang in match.blocking_languages)
             st.error(f"🚫 **Requires fluent {names}** — not in your profile", icon="🚫")
+        signals = getattr(match, "apply_signals", None) or match.reasons
+        risks = getattr(match, "apply_risks", None) or match.warnings
+        if signals or risks:
+            why_col, risk_col = st.columns(2)
+            with why_col:
+                st.markdown("**Why**")
+                for item in signals[:6]:
+                    st.markdown(f"- {item}")
+            with risk_col:
+                st.markdown("**Risks**")
+                if risks:
+                    for item in risks[:5]:
+                        st.markdown(f"- {item}")
+                else:
+                    st.caption("No major risks flagged.")
         if match.warnings:
             visible = [w for w in match.warnings if "not in your profile" not in w]
             if visible:
@@ -692,24 +710,17 @@ else:
     with st.expander("How the matching works", expanded=True):
         st.markdown(
             """
-Each job gets **three scores**, blended 40 / 35 / 25 into the ranking:
+Each job is an **Ahmed opportunity filter**, not a generic keyword match.
 
-| Score | Weight | Question it answers |
-|---|---|---|
-| **Match** | 40% | Does this job suit your skills? Weights change with the career track. |
-| **Eligibility** | 35% | Can you legally and practically take it (location, languages, Romanian)? |
-| **Hiring reality** | 25% | Would a recruiter actually shortlist you? |
+**Hard rejects (removed, not down-scored):** Dutch/German/French required,
+advanced/native Romanian, unreachable location, specialised senior PM /
+logistics leadership.
 
-A weak match cannot be propped up by "no legal barriers". Romanian is graded:
-*a plus* costs nothing; an unspecified *Romanian required* is a risk, not an
-automatic reject. Pick **Logistics & Production** in the sidebar to score
-warehouse / manufacturing roles the way the Timișoara market actually hires.
+**Verdict bands:** 🟢 80–100 Apply now · 🟢 70–79 Strong · 🟡 60–69 Consider
+· 🟠 50–59 Low · 🔴 &lt;50 Skip.
 
-**Location rule:** you work from Timișoara. Remote jobs appear only when they
-are open to Timișoara / Romania, or are Europe-wide / worldwide. A role locked
-to Greece, Poland, the UK or any other single country is hidden — you cannot
-do that job from here. On-site jobs outside Romania stay hidden unless you
-turn on *Open to relocation*.
+Keyword expansion only finds more ads. Fit still requires location, languages,
+transferable skills and seniority that you actually have.
             """
         )
 
