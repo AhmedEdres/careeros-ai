@@ -4,7 +4,7 @@ AI-powered job search, matching and application assistant for the Romanian &
 EU market. Searches several job boards at once, ranks every posting against
 your profile with an explainable score, and tracks your applications.
 
-![tests](https://img.shields.io/badge/tests-214%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-241%20passing-brightgreen)
 
 ---
 
@@ -105,7 +105,7 @@ careeros/
     ├── base.py       # HTTP session, retries, canonical job record
     └── providers.py  # one adapter per job board
 app.py                # Streamlit UI only
-tests/                # 204 tests
+tests/                # 241 tests
 ```
 
 Business logic is pure Python with no Streamlit imports, so it is fully
@@ -117,7 +117,7 @@ unit-testable and reusable outside the UI.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                       # 214 tests
+pytest                       # 241 tests
 pytest tests/test_app_ui.py  # UI regression tests
 ```
 

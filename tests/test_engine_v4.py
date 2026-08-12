@@ -427,3 +427,16 @@ class TestCampaignDeduplication:
         ]
         unique, _ = deduplicate_jobs(jobs)
         assert len(unique) == 2
+
+    def test_greece_only_campaign_is_dropped_from_results(self, profile):
+        """After collapse, a campaign with no Romania/worldwide variant is hidden."""
+        jobs = self._campaign([("GR", "Greece"), ("UK", "UK"), ("PL", "Poland")])
+        kept, stats = score_and_filter(jobs, profile, FilterOptions(min_score=0))
+        assert kept == []
+        assert stats["rejected_hard"] >= 1
+
+    def test_romania_variant_survives_into_results(self, profile):
+        jobs = self._campaign([("GR", "Greece"), ("RO", "Romania")])
+        kept, _ = score_and_filter(jobs, profile, FilterOptions(min_score=0))
+        assert len(kept) == 1
+        assert "Romania" in kept[0]["location"]["display_name"]

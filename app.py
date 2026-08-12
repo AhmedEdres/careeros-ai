@@ -272,7 +272,11 @@ with st.sidebar:
 
     st.divider()
     st.subheader("📌 Filters")
-    st.caption("Filters re-apply instantly — no new API calls.")
+    st.caption(
+        "Filters re-apply instantly — no new API calls. "
+        "Remote roles must be open to Timișoara / Romania or worldwide. "
+        "Country-locked remote (Greece, Poland, UK…) is always hidden."
+    )
     st.slider("Minimum match %", 0, 100, 20, 5, key="f_min_score", on_change=rescore_results)
     st.selectbox(
         "Location filter", ["All", "Timișoara", "Romania", "Remote", "Europe"],
@@ -635,7 +639,7 @@ if results:
     if filtered_out:
         st.caption(
             f"Filtered out {filtered_out}: "
-            f"{stats.get('rejected_hard', 0)} wrong track/language · "
+            f"{stats.get('rejected_hard', 0)} wrong track / unreachable location · "
             f"{stats.get('below_score', 0)} below {st.session_state.get('f_min_score', 20)}% · "
             f"{stats.get('filtered_location', 0)} location · "
             f"{stats.get('filtered_romanian', 0)} Romanian · "
@@ -700,6 +704,12 @@ A weak match cannot be propped up by "no legal barriers". Romanian is graded:
 *a plus* costs nothing; an unspecified *Romanian required* is a risk, not an
 automatic reject. Pick **Logistics & Production** in the sidebar to score
 warehouse / manufacturing roles the way the Timișoara market actually hires.
+
+**Location rule:** you work from Timișoara. Remote jobs appear only when they
+are open to Timișoara / Romania, or are Europe-wide / worldwide. A role locked
+to Greece, Poland, the UK or any other single country is hidden — you cannot
+do that job from here. On-site jobs outside Romania stay hidden unless you
+turn on *Open to relocation*.
             """
         )
 
