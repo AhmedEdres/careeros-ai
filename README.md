@@ -4,7 +4,7 @@ AI-powered job search, matching and application assistant for the Romanian &
 EU market. Searches several job boards at once, ranks every posting against
 your profile with an explainable score, and tracks your applications.
 
-![tests](https://img.shields.io/badge/tests-109%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-115%20passing-brightgreen)
 
 ---
 
@@ -70,7 +70,7 @@ labelled *low confidence* rather than being treated as a complete description.
 ## Features
 
 - **6 job sources in parallel** — Jooble, Remotive, Arbeitnow, Jobicy, Adzuna, Careerjet
-- **Smart deduplication** — the same posting from two boards is merged, keeping the richer description and both source names
+- **Smart deduplication** — the same posting from two boards is merged, and per-country reposts of one campaign (e.g. `(GR)` / `(UK)` / `(PT)`) collapse into a single card that keeps the most eligible location
 - **Instant filters** — match %, location, Romanian requirement, age, salary, already-applied. Re-filtering never re-hits the APIs
 - **Salary intelligence** — parses `3.500 - 5.000 RON/luna`, `€45k per year`, `$25/hour` and normalises everything to RON/month
 - **Application tracker** — status pipeline (Applied → Screening → Interview → Offer), notes, CSV export
@@ -95,7 +95,7 @@ careeros/
     ├── base.py       # HTTP session, retries, canonical job record
     └── providers.py  # one adapter per job board
 app.py                # Streamlit UI only
-tests/                # 109 tests
+tests/                # 115 tests
 ```
 
 Business logic is pure Python with no Streamlit imports, so it is fully
@@ -107,7 +107,7 @@ unit-testable and reusable outside the UI.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                       # 109 tests
+pytest                       # 115 tests
 pytest tests/test_app_ui.py  # UI regression tests
 ```
 

@@ -408,6 +408,10 @@ def render_job_card(index: int, job: Dict) -> None:
         meta.append(confidence_icon.get(match.confidence, ""))
         if job.get("duplicate_count", 1) > 1:
             meta.append(f"🔁 seen on {job['duplicate_count']} boards")
+        if job.get("variant_count", 1) > 1:
+            locations = ", ".join(job.get("variant_locations", [])[:4])
+            extra = f" ({locations})" if locations else ""
+            meta.append(f"🌍 same role posted for {job['variant_count']} countries{extra}")
         st.caption(" · ".join(m for m in meta if m))
 
         if match.warnings:

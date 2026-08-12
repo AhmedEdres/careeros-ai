@@ -72,6 +72,70 @@ class TestDeduplication:
         assert deduplicate_jobs([]) == ([], 0)
 
 
+class TestCampaignDeduplication:
+    """One opening reposted per country must not occupy four result slots.
+
+    Seen live: "Customer service manager (GR) / (CY) / (UK) / (PT)" from the
+    same employer filled positions 1-4, all with identical scores.
+    """
+
+    def _campaign(self, countries):
+        return [
+            job(
+                title=f"Customer service manager ({code})",
+                company="ParcelHero",
+                location=f"Remote — {name}",
+                description="Customer service manager. Operations and logistics. English required.",
+                url=f"https://jobicy.com/j/pc-{code.lower()}",
+                source="Jobicy",
+            )
+            for code, name in countries
+        ]
+
+    def test_country_variants_collapse_into_one(self):
+        jobs = self._campaign([("GR", "Greece"), ("CY", "Cyprus"),
+                               ("UK", "UK"), ("PT", "Portugal")])
+        unique, removed = deduplicate_jobs(jobs)
+        assert len(unique) == 1
+        assert removed == 3
+        assert unique[0]["variant_count"] == 4
+
+    def test_variant_locations_are_recorded(self):
+        unique, _ = deduplicate_jobs(self._campaign([("GR", "Greece"), ("PT", "Portugal")]))
+        assert len(unique[0]["variant_locations"]) == 2
+
+    def test_most_eligible_variant_is_kept(self):
+        jobs = self._campaign([("GR", "Greece"), ("RO", "Romania")])
+        unique, _ = deduplicate_jobs(jobs)
+        kept = unique[0]["location"]["display_name"]
+        assert "Romania" in kept, "the variant he can actually work from must win"
+
+    def test_different_roles_are_not_merged(self):
+        jobs = self._campaign([("GR", "Greece")]) + [
+            job(title="Back Office Specialist", company="Other Co",
+                location="Timisoara, Romania", description="Back office.",
+                url="https://x.com/9", source="Jooble")
+        ]
+        unique, removed = deduplicate_jobs(jobs)
+        assert len(unique) == 2 and removed == 0
+
+    def test_same_title_different_employer_is_not_merged(self):
+        jobs = [
+            job(title="Customer service manager (GR)", company="ParcelHero",
+                location="Remote — Greece", description="A", url="https://x.com/1", source="Jobicy"),
+            job(title="Customer service manager (GR)", company="Rival Ltd",
+                location="Remote — Greece", description="B", url="https://x.com/2", source="Jobicy"),
+        ]
+        unique, _ = deduplicate_jobs(jobs)
+        assert len(unique) == 2
+
+    def test_kept_location_is_listed_among_variants(self):
+        unique, _ = deduplicate_jobs(self._campaign([("GR", "Greece"), ("RO", "Romania")]))
+        locations = unique[0]["variant_locations"]
+        assert any("Romania" in loc for loc in locations)
+        assert any("Greece" in loc for loc in locations)
+
+
 class TestScoreAndFilter:
     def test_min_score_filter(self):
         jobs = [job(), job(title="Random unrelated role", url="https://x.com/2",

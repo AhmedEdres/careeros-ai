@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from .matching import MatchResult, calculate_match, hard_filter_job
-from .profile import Profile
+from .matching import MatchResult, calculate_match, classify_remote_geography, hard_filter_job
+from .profile import LOCATION_SYNONYMS, Profile
 from .sources import PROVIDERS, SourceResult, build_session, fetch_source
-from .text import canonical_url, normalize_text, safe_company_name, text_hash
+from .text import (
+    canonical_url,
+    contains_any,
+    is_romania_location,
+    normalize_text,
+    safe_company_name,
+    text_hash,
+)
 
 __all__ = [
     "CAREER_PRESETS",
@@ -152,6 +160,62 @@ def build_search_queries(base_keywords: str, expand: bool = True) -> List[str]:
     return unique[:MAX_QUERIES]
 
 
+# Country / work-mode tags boards append to otherwise identical titles:
+# "Customer service manager (GR)", "(CY)", "(UK)", "(m/f/d)".
+_COUNTRY_SUFFIX_RE = re.compile(
+    r"\s*[\(\[]\s*(?:[a-z]{2,3}|remote|hybrid|onsite|on-site|m/f/d|m/w/d|h/f)\s*[\)\]]\s*$"
+)
+
+
+def _campaign_key(job: Dict) -> str:
+    """Identity of a job *campaign* — the same opening posted per country.
+
+    Boards such as Jobicy list one role once per target market:
+    "Customer service manager (GR)", "(CY)", "(UK)", "(PT)" — same employer,
+    same description, four cards crowding out everything else. They share a
+    title once the country tag is stripped, so they collapse into one entry
+    that keeps the most eligible location.
+    """
+    title = normalize_text(job.get("title", ""))
+    title = _COUNTRY_SUFFIX_RE.sub("", title).strip()
+    company = normalize_text(safe_company_name(job.get("company")))
+    return text_hash(f"{title}|{company}")
+
+
+def _job_location_label(job: Dict) -> str:
+    return str((job.get("location") or {}).get("display_name", "") or "")
+
+
+def _location_rank(job: Dict) -> int:
+    """Prefer the variant the candidate is most likely to be eligible for.
+
+    Higher is better. Romania (home country) beats a Greece-only or UK-only
+    remote posting of the same campaign; EU-wide remote sits in between.
+    """
+    location = _job_location_label(job)
+    description = str(job.get("description", "") or "")
+    loc = normalize_text(location)
+
+    if contains_any(loc, LOCATION_SYNONYMS["Timișoara"]):
+        return 100
+    if is_romania_location(location):
+        return 90
+
+    remote = classify_remote_geography(location, description)
+    if remote == "excellent":
+        # Continent-wide / worldwide remote beats a single foreign country.
+        if contains_any(loc, ["europe", "eu", "eea", "emea", "worldwide", "anywhere", "global"]):
+            return 80
+        return 45
+    if remote == "good":
+        return 40
+    if contains_any(loc, LOCATION_SYNONYMS["Europe"]):
+        return 30
+    if remote == "restricted":
+        return 10
+    return 0
+
+
 def _job_identity(job: Dict) -> Tuple[str, str]:
     """Return (url_key, content_key) used for deduplication."""
     url_key = canonical_url(job.get("redirect_url", ""))
@@ -207,7 +271,40 @@ def deduplicate_jobs(jobs: List[Dict]) -> Tuple[List[Dict], int]:
         merged["duplicate_count"] = int(existing.get("duplicate_count", 1)) + 1
         by_key[key] = merged
 
-    return [by_key[k] for k in order], removed
+    deduped = [by_key[k] for k in order]
+
+    # Second pass: collapse per-country reposts of the same campaign.
+    campaigns: Dict[str, Dict] = {}
+    campaign_order: List[str] = []
+    for entry in deduped:
+        key = _campaign_key(entry)
+        existing = campaigns.get(key)
+        if existing is None:
+            campaigns[key] = entry
+            campaign_order.append(key)
+            continue
+        removed += 1
+        # Keep the variant he is most likely to be eligible for; if two are
+        # equal, keep the richer description.
+        better = max(
+            (existing, entry),
+            key=lambda j: (_location_rank(j), len(str(j.get("description", "")))),
+        )
+        other = entry if better is existing else existing
+        merged = dict(better)
+        merged["variant_count"] = int(existing.get("variant_count", 1)) + 1
+        variants = list(existing.get("variant_locations") or [])
+        if not variants:
+            existing_loc = _job_location_label(existing)
+            if existing_loc:
+                variants.append(existing_loc)
+        for loc in (_job_location_label(other), _job_location_label(better)):
+            if loc and loc not in variants:
+                variants.append(loc)
+        merged["variant_locations"] = variants
+        campaigns[key] = merged
+
+    return [campaigns[k] for k in campaign_order], removed
 
 
 def run_search(request: SearchRequest, max_workers: int = 8) -> SearchReport:
