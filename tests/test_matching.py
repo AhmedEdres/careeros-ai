@@ -9,6 +9,7 @@ from careeros.matching import (
     priority_band,
 )
 from careeros.profile import Profile
+from careeros.text import normalize_text
 
 
 def make_job(title="Operations Coordinator", description="", location="Timisoara, Romania", **kw):
@@ -52,6 +53,30 @@ class TestHardFilter:
         keep, _ = hard_filter_job(make_job(description="Customer support, English required."), profile)
         assert keep
 
+    def test_rejects_fluent_english_and_french_title(self, profile):
+        keep, reason = hard_filter_job(make_job(
+            title="(fluent English & French) Customer Support Consultant, hospitality",
+            location="Remote — Anywhere",
+            description="Customer support in hospitality.",
+        ), profile)
+        assert not keep
+        assert "French" in reason
+
+    def test_rejects_us_sales_dialer(self, profile):
+        keep, reason = hard_filter_job(make_job(
+            title="Dialer (US Sales Team)",
+            location="Remote — Anywhere",
+        ), profile)
+        assert not keep
+
+    def test_rejects_dutch_in_title(self, profile):
+        keep, reason = hard_filter_job(
+            make_job(title="Service Desk Agent with Dutch", description="Dutch required."),
+            profile,
+        )
+        assert not keep
+        assert "Dutch" in reason
+
     def test_developer_word_in_description_does_not_reject(self, profile):
         job = make_job(title="Back Office Specialist",
                        description="You will support our java developer teams with invoicing.")
@@ -77,6 +102,10 @@ class TestLanguageClassification:
 
     def test_mentioned(self):
         assert classify_language_mention("our arabic team is growing", "arabic") == "mentioned"
+
+    def test_fluent_english_ampersand_french_is_required(self):
+        text = normalize_text("(fluent English & French) Customer Support Consultant, hospitality")
+        assert classify_language_mention(text, "french") == "required"
 
 
 class TestRomanianClassification:

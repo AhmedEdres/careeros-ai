@@ -169,6 +169,44 @@ def _job_text(job: Dict) -> Tuple[str, str, str, str]:
 # ---------------------------------------------------------------------------
 # Classifiers
 # ---------------------------------------------------------------------------
+# "fluent English & French" / "English and German required" — the second
+# language is not next to "fluent", so phrase checks miss it.
+_FLUENT_BUNDLE_RE = re.compile(
+    r"(?:fluent(?:ly)?(?:\s+in)?|fluency\s+in|native(?:-|\s+)level|"
+    r"must\s+speak|languages?)\s+"
+    r"([a-z]+(?:\s*(?:and|&|/|,)\s*[a-z]+){1,8})",
+    re.IGNORECASE,
+)
+_PAIR_WITH_ENGLISH_RE = re.compile(
+    r"(?:english|arabic)\s*(?:and|&|/)\s*([a-z]+)"
+    r"|"
+    r"([a-z]+)\s*(?:and|&|/)\s*(?:english|arabic)",
+    re.IGNORECASE,
+)
+
+
+def _language_in_required_bundle(text: str, lang: str) -> bool:
+    """True when *lang* is listed as a fluency/required language with others."""
+    lang = normalize_text(lang)
+    for match in _FLUENT_BUNDLE_RE.finditer(text):
+        parts = [
+            p.strip()
+            for p in re.split(r"\s*(?:and|&|/|,)\s*", normalize_text(match.group(1)))
+            if p.strip()
+        ]
+        if lang in parts:
+            return True
+    for match in _PAIR_WITH_ENGLISH_RE.finditer(text):
+        other = normalize_text(match.group(1) or match.group(2) or "")
+        if other == lang:
+            # Only treat as required when the pair is not clearly a plus.
+            window = text[max(0, match.start() - 12): match.end() + 24]
+            if contains_any(window, ["a plus", "an advantage", "nice to have", "bonus"]):
+                return False
+            return True
+    return False
+
+
 def classify_language_mention(text: str, lang: str) -> str:
     """Classify how a language appears: required / preferred / plus / mentioned / none."""
     lang = normalize_text(lang)
@@ -196,12 +234,13 @@ def classify_language_mention(text: str, lang: str) -> str:
         f"knowledge of {lang}", f"{lang} b1", f"{lang} a2",
     ]
 
-    if contains_any(text, required):
+    # Plus beats a coordinated list: "English and French is a plus".
+    if contains_any(text, plus):
+        return "plus"
+    if contains_any(text, required) or _language_in_required_bundle(text, lang):
         return "required"
     if contains_any(text, preferred):
         return "preferred"
-    if contains_any(text, plus):
-        return "plus"
     return "mentioned"
 
 
@@ -566,7 +605,15 @@ def hard_filter_job(job: Dict, profile: Profile, track: str = "") -> Tuple[bool,
             "not a transferable-skills application"
         )
 
+<<<<<<< HEAD
     # 5. Clearly different career track (title only).
+=======
+    # 5. US outbound sales / dialer — not Ahmed's market or work auth.
+    if contains_any(title, ["dialer", "us sales", "usa sales", "sdr", "bdr", "cold call"]):
+        return False, "🔴 US sales / dialer — not a reachable or relevant role"
+
+    # 6. Clearly different career track (title only).
+>>>>>>> 7171ba7 (Catch “fluent English & French” titles and US dialer roles.)
     negatives = list(NEGATIVE_TITLES)
     if resolved == TRACK_LOGISTICS:
         negatives = [t for t in negatives if t not in LOGISTICS_ALLOWED_TITLES]
