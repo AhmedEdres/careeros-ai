@@ -112,6 +112,26 @@ class TestRemoteGeography:
         assert classify_remote_geography("Remote — Deutschland", "") == "remote_unclear"
         assert classify_remote_geography("Remote — Neuchatel", "") == "remote_unclear"
 
+    def test_description_generic_words_do_not_override_location_country(self):
+        # Regression: "global" / "work from anywhere" in the ad body must not
+        # turn a "Remote — Greece" listing into EU-wide eligibility. The country
+        # named in the location wins over generic wording in the description.
+        assert classify_remote_geography(
+            "Remote — Greece",
+            "Join our global team. Work from anywhere in the world.",
+        ) == "remote_unclear"
+        assert classify_remote_geography(
+            "Remote — Greece",
+            "We are hiring worldwide, fully remote, work from anywhere.",
+        ) == "remote_unclear"
+
+    def test_anywhere_location_without_country_is_still_eu_wide(self):
+        # "Remote — Anywhere" genuinely means worldwide eligibility.
+        assert classify_remote_geography(
+            "Remote — Anywhere",
+            "Join our global team.",
+        ) == "remote_eu"
+
 
 class TestScoring:
     def test_perfect_local_job_scores_high(self, profile):
@@ -190,6 +210,46 @@ class TestScoring:
         a = calculate_match(onsite, Profile(open_to_relocation=False))
         b = calculate_match(onsite, Profile(open_to_relocation=True))
         assert b.score > a.score
+
+
+class TestRemoteGreeceLabourMarket:
+    """Regression: a "Remote — Greece" job must not rank as an EU/Europe-wide
+    role even when the ad body says "global" / "work from anywhere".
+
+    Seen in production: "Customer service manager (GR) / Remote — Greece"
+    scored ~75% and ranked #1 as "EU/Europe/worldwide eligible". After the fix
+    the location country wins over generic description wording.
+    """
+
+    def test_remote_greece_is_not_eu_wide(self, profile):
+        job = make_job(
+            title="Customer service manager (GR)",
+            location="Remote — Greece",
+            description=(
+                "Join our global team. Work from anywhere. "
+                "English required. 5 years of experience. "
+                "Customer service operations and client management."
+            ),
+        )
+        match = calculate_match(job, profile)
+        assert match.remote in {"remote_unclear", "remote_country", "restricted"}
+        assert match.remote != "remote_eu"
+        assert not any("EU/Europe/worldwide eligible" in r for r in match.eligibility_reasons)
+        assert any("another country" in n for n in match.eligibility_reasons)
+
+    def test_remote_greece_ranks_below_eu_wide_role(self, profile):
+        # The same role offered EU-wide should beat one tied to a single country.
+        greece = calculate_match(make_job(
+            title="Customer service manager",
+            location="Remote — Greece",
+            description="Customer service operations. English required.",
+        ), profile)
+        eu_wide = calculate_match(make_job(
+            title="Customer service manager",
+            location="Remote — Europe",
+            description="Customer service operations. English required. Work from anywhere.",
+        ), profile)
+        assert eu_wide.score > greece.score
 
 
 class TestForeignLanguageRequirements:

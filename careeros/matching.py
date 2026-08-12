@@ -235,16 +235,21 @@ def classify_remote_geography(location_text: str, description_text: str) -> str:
     if mentions_romania:
         return "remote_country"
 
-    # "Remote — Europe/EU/EEA/worldwide" is real EU-wide eligibility.
-    if contains_any(combined, REMOTE_FRIENDLY):
-        return "remote_eu"
-
+    # A single foreign country named in the *location* (e.g. "Remote — Greece")
+    # is that country's labour market, not EU-wide eligibility. It must win over
+    # generic "anywhere"/"global"/"worldwide" wording in the ad body, so it is
+    # checked before REMOTE_FRIENDLY.
     single_country = [
         country for country in LOCATION_SYNONYMS["Europe"]
         if country not in _EU_REGION_TOKENS and contains_phrase(loc, country)
     ]
     if single_country and not contains_any(loc, ["europe", "europa", "eu", "eea", "emea"]):
         return "remote_unclear"
+
+    # "Remote — Europe/EU/EEA/worldwide" is real EU-wide eligibility.
+    if contains_any(combined, REMOTE_FRIENDLY):
+        return "remote_eu"
+
     if contains_any(loc, LOCATION_SYNONYMS["Europe"]):
         return "remote_eu"
     return "remote_unclear"
