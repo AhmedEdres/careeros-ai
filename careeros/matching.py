@@ -206,8 +206,19 @@ def classify_romanian_requirement(text: str) -> str:
     return "none"
 
 
+_EU_REGION_TOKENS = {
+    "europe", "europa", "european union", "eu", "eea", "emea", "cet",
+}
+
+
 def classify_remote_geography(location_text: str, description_text: str) -> str:
-    """Return: excellent / good / restricted / not_remote."""
+    """Return: remote_country / remote_eu / remote_unclear / restricted / not_remote.
+
+    "Remote — Europe/EU/EEA/worldwide" genuinely means he can work from
+    Romania. "Remote — Greece" almost always means remote *from within
+    Greece*, which is a different country's labour market — naming one
+    foreign country is not EU-wide eligibility.
+    """
     loc = normalize_text(location_text)
     desc = normalize_text(description_text)
     combined = f"{loc} {desc[:1500]}"
@@ -219,11 +230,24 @@ def classify_remote_geography(location_text: str, description_text: str) -> str:
 
     if contains_any(combined, REMOTE_RESTRICTED):
         return "restricted"
+
+    mentions_romania = contains_any(combined, LOCATION_SYNONYMS["Romania"])
+    if mentions_romania:
+        return "remote_country"
+
+    # "Remote — Europe/EU/EEA/worldwide" is real EU-wide eligibility.
     if contains_any(combined, REMOTE_FRIENDLY):
-        return "excellent"
+        return "remote_eu"
+
+    single_country = [
+        country for country in LOCATION_SYNONYMS["Europe"]
+        if country not in _EU_REGION_TOKENS and contains_phrase(loc, country)
+    ]
+    if single_country and not contains_any(loc, ["europe", "europa", "eu", "eea", "emea"]):
+        return "remote_unclear"
     if contains_any(loc, LOCATION_SYNONYMS["Europe"]):
-        return "excellent"
-    return "good"
+        return "remote_eu"
+    return "remote_unclear"
 
 
 HIGH_PRIORITY_THRESHOLD = 80
@@ -302,13 +326,19 @@ def _score_location(loc: str, desc: str, profile: Profile, result: MatchResult) 
         result.reasons.append("🇷🇴 Romania — same country, work authorisation OK")
         return 15
 
-    if remote_class == "excellent":
+    if remote_class == "remote_country":
+        result.reasons.append("🏠 Remote — Romania explicitly eligible")
+        return 18
+    if remote_class in {"remote_eu", "excellent"}:
         result.reasons.append("🏠 Remote — EU/Europe/worldwide eligible")
         return 16
-    if remote_class == "good":
-        result.reasons.append("🏠 Remote — eligibility not stated")
-        result.warnings.append("⚠️ Remote without an explicit EU mention — confirm Romania is eligible")
-        return 10
+    if remote_class in {"remote_unclear", "good"}:
+        result.reasons.append("🏠 Remote — but tied to another country, or eligibility not stated")
+        result.warnings.append(
+            "⚠️ Remote listing names a single foreign country (or none) — "
+            "this is usually that country's labour market, not EU-wide"
+        )
+        return 6
     if remote_class == "restricted":
         result.warnings.append("⚠️ Remote role restricted to another region")
         return 2
@@ -584,13 +614,19 @@ def _score_eligibility(
     elif contains_any(loc, LOCATION_SYNONYMS.get("Romania", [])):
         score += 24
         notes.append("🇷🇴 Romania-based — work authorisation is already in place")
-    elif result.remote == "excellent":
-        score += 30
+    elif result.remote == "remote_country":
+        score += 32
+        notes.append("🏠 Remote and explicitly open to Romania")
+    elif result.remote in {"remote_eu", "excellent"}:
+        score += 28
         notes.append("🏠 Remote and explicitly EU/Europe eligible")
-    elif result.remote == "good":
-        score += 12
-        notes.append("🏠 Remote, but EU eligibility is not spelled out")
-        result.warnings.append("⚠️ Remote without an explicit EU mention — confirm Romania is eligible")
+    elif result.remote in {"remote_unclear", "good"}:
+        score += 6
+        notes.append("🏠 Remote, but likely another country's labour market")
+        result.warnings.append(
+            "⚠️ Remote listing names a single foreign country (or none) — "
+            "confirm Romania is eligible before applying"
+        )
     elif result.remote == "restricted":
         score -= 28
         notes.append("🚫 Remote role is restricted to another region")

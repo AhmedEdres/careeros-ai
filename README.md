@@ -63,6 +63,10 @@ worth 0 on Customer Support and 12 on Finance. A Bucharest finance role is
 unspecified "Romanian and English required" is a risk, not an automatic reject.
 Advanced C1/C2/fluent/native is still a hard filter.
 
+**Remote geography is graded.** `Remote — Romania` is eligible; `Remote — Europe/EU`
+is eligible; `Remote — Greece` (or any single foreign country) is *that*
+country's labour market, not EU-wide — it no longer ranks as a free remote win.
+
 **Rejected before scoring:** advanced Romanian, remote roles restricted to
 another region, and titles on a clearly different career track (a CNC operator
 is kept on *Logistics & Production*).

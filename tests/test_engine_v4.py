@@ -152,7 +152,7 @@ class TestRomanianPressure:
         assert romanian_pressure(TRACK_FINANCE, "Bucharest, Romania", "not_remote") == 1.35
 
     def test_remote_arabic_desk_is_0_5(self):
-        assert romanian_pressure(TRACK_ARABIC, "Remote — Europe", "excellent") == 0.5
+        assert romanian_pressure(TRACK_ARABIC, "Remote — Europe", "remote_eu") == 0.5
 
     def test_plus_costs_nothing(self, profile):
         plus = calculate_match(

@@ -230,7 +230,9 @@ def romanian_pressure(
     loc = normalize_text(location_text)
     remote = remote_class or "not_remote"
 
-    if resolved == TRACK_ARABIC and remote in {"excellent", "good"}:
+    if resolved == TRACK_ARABIC and remote in {
+        "remote_eu", "remote_country", "excellent", "good",
+    }:
         return 0.5
     if resolved == TRACK_FINANCE and contains_any(loc, ["bucharest", "bucuresti"]):
         return 1.35
@@ -238,6 +240,6 @@ def romanian_pressure(
         return round(TRACK_RO_PRESSURE[resolved] * 1.17, 2)
 
     base = TRACK_RO_PRESSURE[resolved]
-    if remote == "excellent":
+    if remote in {"remote_eu", "excellent"}:
         return round(base * 0.7, 2)
     return base
