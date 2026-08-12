@@ -111,6 +111,9 @@ class TestRemoteGeography:
         assert classify_remote_geography("Remote — Greece", "") == "remote_unclear"
         assert classify_remote_geography("Remote — Deutschland", "") == "remote_unclear"
         assert classify_remote_geography("Remote — Neuchatel", "") == "remote_unclear"
+        assert classify_remote_geography("Remote — UK", "") == "remote_unclear"
+        assert classify_remote_geography("Remote — England", "") == "remote_unclear"
+        assert classify_remote_geography("Remote — Poland", "") == "remote_unclear"
 
     def test_description_generic_words_do_not_override_location_country(self):
         # Regression: "global" / "work from anywhere" in the ad body must not
@@ -123,6 +126,10 @@ class TestRemoteGeography:
         assert classify_remote_geography(
             "Remote — Greece",
             "We are hiring worldwide, fully remote, work from anywhere.",
+        ) == "remote_unclear"
+        assert classify_remote_geography(
+            "Remote — UK",
+            "Join our global team. Work from anywhere.",
         ) == "remote_unclear"
 
     def test_anywhere_location_without_country_is_still_eu_wide(self):
@@ -250,6 +257,15 @@ class TestRemoteGreeceLabourMarket:
             description="Customer service operations. English required. Work from anywhere.",
         ), profile)
         assert eu_wide.score > greece.score
+
+    def test_remote_greece_is_hard_filtered(self, profile):
+        keep, reason = hard_filter_job(make_job(
+            title="Customer service manager (GR)",
+            location="Remote — Greece",
+            description="Join our global team. Work from anywhere. English required.",
+        ), profile)
+        assert not keep
+        assert "Greece" in reason
 
 
 class TestForeignLanguageRequirements:
@@ -381,3 +397,65 @@ class TestScoreNormalisation:
             age_days=1,
         )
         assert 0 <= calculate_match(job, profile).score <= 100
+
+
+class TestReachableWorkLocation:
+    """He works from Timișoara. Only Romania / open-region remote is reachable.
+
+    Country-locked remote (Greece, Poland, UK/England) and on-site jobs in
+    those countries must not appear. Worldwide / Europe-wide remote must.
+    """
+
+    @pytest.mark.parametrize("title,location,should_keep", [
+        ("Support", "Remote — Greece", False),
+        ("Support", "Remote — Poland", False),
+        ("Support", "Remote — UK", False),
+        ("Support", "Remote — England", False),
+        ("Support", "Remote — London", False),
+        ("Customer service manager (GR)", "Remote", False),
+        ("Customer service manager (UK)", "Remote", False),
+        ("Support", "Warsaw, Poland", False),
+        ("Support", "London, UK", False),
+        ("Support", "Berlin, Germany", False),
+        ("Support", "Athens, Greece", False),
+        ("Support", "Remote — Romania", True),
+        ("Support", "Remote — Timisoara", True),
+        ("Support", "Remote — Europe", True),
+        ("Support", "Remote — EU", True),
+        ("Support", "Remote — Anywhere", True),
+        ("Support", "Remote — Worldwide", True),
+        ("Support", "Remote", True),
+        ("Support", "Timisoara, Romania", True),
+        ("Support", "Bucharest, Romania", True),
+        ("Support", "Remote — Europe, Germany hub", True),
+        ("Customer service manager (RO)", "Remote — Romania", True),
+    ])
+    def test_hard_filter_matrix(self, profile, title, location, should_keep):
+        keep, reason = hard_filter_job(
+            make_job(title=title, location=location, description="Customer support. English required."),
+            profile,
+        )
+        assert keep is should_keep, f"{title} / {location}: keep={keep} reason={reason!r}"
+
+    def test_relocation_unlocks_onsite_but_not_foreign_remote(self):
+        mover = Profile(open_to_relocation=True)
+        onsite, _ = hard_filter_job(
+            make_job(title="Support", location="Berlin, Germany", description="office"),
+            mover,
+        )
+        remote_gr, reason = hard_filter_job(
+            make_job(title="Support", location="Remote — Greece", description="remote"),
+            mover,
+        )
+        assert onsite, "relocation should allow an on-site EU office"
+        assert not remote_gr
+        assert "Greece" in reason
+
+    def test_generic_worldwide_wording_does_not_save_uk_remote(self, profile):
+        keep, reason = hard_filter_job(make_job(
+            title="Customer service manager (UK)",
+            location="Remote — UK",
+            description="Join our global team. Work from anywhere in the world.",
+        ), profile)
+        assert not keep
+        assert "UK" in reason

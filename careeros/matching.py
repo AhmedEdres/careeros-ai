@@ -67,6 +67,7 @@ __all__ = [
     "classify_language_mention",
     "classify_romanian_requirement",
     "classify_remote_geography",
+    "foreign_labour_market",
     "priority_band",
     "blend_scores",
 ]
@@ -210,6 +211,196 @@ _EU_REGION_TOKENS = {
     "europe", "europa", "european union", "eu", "eea", "emea", "cet",
 }
 
+# Region tokens that mean "you can work from Romania".
+_OPEN_REGION_TOKENS = {
+    "europe", "europa", "european union", "eu", "eea", "emea", "cet",
+    "worldwide", "anywhere", "global", "world",
+}
+
+# Stripped from a location before deciding leftover text is a place name.
+_LOCATION_NOISE = _OPEN_REGION_TOKENS | {
+    "remote", "work from home", "wfh", "telemunca", "hybrid",
+    "onsite", "on-site", "on site", "office", "based",
+    "timezone", "time zone", "cest", "gmt", "utc",
+}
+
+# Pretty names for ISO-style title tags: "Customer service manager (GR)".
+# Skip codes that collide with job abbreviations (IT, HR, QA, PR, PM, EN).
+_TITLE_MARKET_CODES = {
+    "gr": "Greece", "el": "Greece",
+    "cy": "Cyprus",
+    "uk": "UK", "gb": "UK",
+    "pl": "Poland",
+    "pt": "Portugal",
+    "es": "Spain",
+    "nl": "Netherlands",
+    "be": "Belgium",
+    "at": "Austria",
+    "ie": "Ireland",
+    "se": "Sweden",
+    "dk": "Denmark",
+    "fi": "Finland",
+    "no": "Norway",
+    "ch": "Switzerland",
+    "hu": "Hungary",
+    "bg": "Bulgaria",
+    "sk": "Slovakia",
+    "si": "Slovenia",
+    "lt": "Lithuania",
+    "lv": "Latvia",
+    "ee": "Estonia",
+    "cz": "Czechia",
+    "ua": "Ukraine",
+    "tr": "Turkey",
+    "ae": "UAE",
+    "de": "Germany",
+    "fr": "France",
+    "us": "USA",
+    "ca": "Canada",
+    "in": "India",
+    "mt": "Malta",
+    "lu": "Luxembourg",
+}
+
+_TITLE_MARKET_RE = re.compile(r"[\(\[]\s*([a-z]{2,3})\s*[\)\]]", re.IGNORECASE)
+
+# Extra markets not already listed under LOCATION_SYNONYMS["Europe"].
+_EXTRA_FOREIGN_MARKETS = {
+    "uk": "UK",
+    "united kingdom": "UK",
+    "england": "UK",
+    "britain": "UK",
+    "great britain": "UK",
+    "scotland": "UK",
+    "wales": "UK",
+    "united states": "USA",
+    "usa": "USA",
+    "canada": "Canada",
+    "india": "India",
+    "uae": "UAE",
+    "united arab emirates": "UAE",
+    "dubai": "UAE",
+    "turkey": "Turkey",
+    "turkiye": "Turkey",
+    "ukraine": "Ukraine",
+    "cyprus": "Cyprus",
+    "malta": "Malta",
+    "luxembourg": "Luxembourg",
+    "iceland": "Iceland",
+    "london": "UK",
+    "manchester": "UK",
+    "birmingham": "UK",
+    "warsaw": "Poland",
+    "warszawa": "Poland",
+    "krakow": "Poland",
+    "athens": "Greece",
+    "berlin": "Germany",
+    "munich": "Germany",
+    "hamburg": "Germany",
+    "paris": "France",
+    "madrid": "Spain",
+    "barcelona": "Spain",
+    "amsterdam": "Netherlands",
+    "lisbon": "Portugal",
+    "prague": "Czechia",
+    "vienna": "Austria",
+    "brussels": "Belgium",
+    "dublin": "Ireland",
+}
+
+_PRETTY_MARKET = {
+    "uk": "UK", "united kingdom": "UK", "england": "UK", "britain": "UK",
+    "great britain": "UK", "scotland": "UK", "wales": "UK",
+    "usa": "USA", "united states": "USA",
+    "uae": "UAE", "united arab emirates": "UAE",
+    "germany": "Germany", "deutschland": "Germany",
+    "france": "France", "spain": "Spain", "italy": "Italy",
+    "netherlands": "Netherlands", "poland": "Poland", "polska": "Poland",
+    "czech": "Czechia", "czechia": "Czechia", "austria": "Austria",
+    "belgium": "Belgium", "portugal": "Portugal", "ireland": "Ireland",
+    "sweden": "Sweden", "denmark": "Denmark", "finland": "Finland",
+    "norway": "Norway", "switzerland": "Switzerland", "hungary": "Hungary",
+    "croatia": "Croatia", "greece": "Greece", "bulgaria": "Bulgaria",
+    "slovakia": "Slovakia", "slovenia": "Slovenia", "lithuania": "Lithuania",
+    "latvia": "Latvia", "estonia": "Estonia",
+}
+
+
+def _is_home_location(text: str) -> bool:
+    return contains_any(text, LOCATION_SYNONYMS["Romania"] + LOCATION_SYNONYMS["Timișoara"])
+
+
+def _is_open_region(text: str) -> bool:
+    return contains_any(text, _OPEN_REGION_TOKENS)
+
+
+def _countries_named_in(text: str) -> List[str]:
+    """Return pretty country labels mentioned in already-normalised text."""
+    found: List[str] = []
+    seen = set()
+    phrases = []
+    for phrase in LOCATION_SYNONYMS["Europe"]:
+        if phrase in _EU_REGION_TOKENS:
+            continue
+        if phrase in LOCATION_SYNONYMS["Romania"] or phrase == "romania":
+            continue
+        phrases.append((phrase, _PRETTY_MARKET.get(phrase, phrase.title())))
+    phrases.extend(_EXTRA_FOREIGN_MARKETS.items())
+    phrases.sort(key=lambda item: len(item[0]), reverse=True)
+    for phrase, label in phrases:
+        if label in seen:
+            continue
+        if contains_phrase(text, phrase):
+            found.append(label)
+            seen.add(label)
+    return found
+
+
+def _leftover_place(location_text: str) -> str:
+    """What remains of a location after removing remote/worldwide filler."""
+    text = normalize_text(location_text)
+    for token in sorted(_LOCATION_NOISE, key=len, reverse=True):
+        text = re.sub(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", " ", text)
+    return re.sub(r"[\s,;:/|]+", " ", text).strip()
+
+
+def _title_market(title: str) -> Optional[str]:
+    for code in _TITLE_MARKET_RE.findall(normalize_text(title)):
+        if code == "ro":
+            return None
+        label = _TITLE_MARKET_CODES.get(code)
+        if label:
+            return label
+    return None
+
+
+def foreign_labour_market(location_text: str, title: str = "") -> Optional[str]:
+    """Return the foreign country a listing is tied to, or None if reachable.
+
+    A role is reachable when it is in Timișoara / Romania, or remote with an
+    open region (Europe / EU / worldwide). ``Remote — Greece`` / ``(UK)`` is
+    that country's labour market — he cannot do it from Timișoara.
+    """
+    loc = normalize_text(location_text)
+    if _is_home_location(loc):
+        return None
+
+    open_region = _is_open_region(loc)
+    named = _countries_named_in(loc)
+    if named and not open_region:
+        return named[0]
+
+    if not open_region:
+        leftover = _leftover_place(location_text)
+        if leftover and not _is_home_location(leftover):
+            pretty = _PRETTY_MARKET.get(leftover, _EXTRA_FOREIGN_MARKETS.get(leftover))
+            return pretty or leftover.title()
+
+        tagged = _title_market(title)
+        if tagged:
+            return tagged
+    return None
+
 
 def classify_remote_geography(location_text: str, description_text: str) -> str:
     """Return: remote_country / remote_eu / remote_unclear / restricted / not_remote.
@@ -296,11 +487,30 @@ def hard_filter_job(job: Dict, profile: Profile, track: str = "") -> Tuple[bool,
     if profile.romanian_rank < 4 and contains_any(full, ROMANIAN_REJECT):
         return False, "🔴 Requires advanced Romanian (C1/C2/fluent/native)"
 
-    # 2. Geographically restricted remote roles.
+    # 2. Geographically restricted or unreachable roles.
+    #    He works from Timișoara. Remote is only useful when Romania / the
+    #    EU / worldwide is eligible. "Remote — Greece/Poland/UK" is that
+    #    country's labour market. On-site jobs outside Romania need relocation.
     if contains_any(loc, REMOTE_RESTRICTED):
         return False, "🔴 Geographically restricted (outside EU)"
-    if classify_remote_geography(loc, desc) == "restricted":
+    remote_class = classify_remote_geography(loc, desc)
+    if remote_class == "restricted":
         return False, "🔴 Remote but restricted to a non-EU region"
+
+    raw_location = _job_location(job)
+    raw_title = str(job.get("title", "") or "")
+    market = foreign_labour_market(raw_location, raw_title)
+    if market:
+        home = profile.location or "Timișoara"
+        if remote_class != "not_remote":
+            return False, (
+                f"🔴 Remote but only from {market} — not reachable from {home}"
+            )
+        if not profile.open_to_relocation:
+            return False, (
+                f"🔴 On-site in {market} — you are based in {home} "
+                f"and not open to relocation"
+            )
 
     # 3. Clearly different career track (title only).
     negatives = list(NEGATIVE_TITLES)

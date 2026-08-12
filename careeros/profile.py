@@ -203,6 +203,9 @@ LOCATION_SYNONYMS: Dict[str, List[str]] = {
         "portugal", "romania", "ireland", "sweden", "denmark", "finland",
         "norway", "switzerland", "hungary", "croatia", "greece", "bulgaria",
         "slovakia", "slovenia", "lithuania", "latvia", "estonia",
+        # UK was missing — "Remote — UK" was then treated as EU-wide.
+        "uk", "united kingdom", "england", "britain", "great britain",
+        "scotland", "wales", "cyprus", "malta", "luxembourg", "iceland",
     ],
 }
 
