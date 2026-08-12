@@ -4,7 +4,7 @@ AI-powered job search, matching and application assistant for the Romanian &
 EU market. Searches several job boards at once, ranks every posting against
 your profile with an explainable score, and tracks your applications.
 
-![tests](https://img.shields.io/badge/tests-204%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-214%20passing-brightgreen)
 
 ---
 
@@ -76,7 +76,7 @@ is kept on *Logistics & Production*).
 ## Features
 
 - **6 job sources in parallel** — Jooble, Remotive, Arbeitnow, Jobicy, Adzuna, Careerjet
-- **Smart deduplication** — the same posting from two boards is merged, keeping the richer description and both source names
+- **Smart deduplication** — the same posting from two boards is merged, keeping the richer description and both source names. Per-country campaign reposts (`(GR)` / `(UK)` / `(PT)`) collapse into one card, keeping the location he is most likely eligible for
 - **Three scores on every card** — Match, Eligibility, Hiring reality, blended 40/35/25
 - **Hiring reality tab** — why a recruiter would (or would not) shortlist you
 - **Logistics & Production track** — Timișoara manufacturing / warehouse weighting
@@ -117,7 +117,7 @@ unit-testable and reusable outside the UI.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                       # 204 tests
+pytest                       # 214 tests
 pytest tests/test_app_ui.py  # UI regression tests
 ```
 

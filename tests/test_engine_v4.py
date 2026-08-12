@@ -353,3 +353,77 @@ class TestHighPriorityStillWorks:
         assert match.match_score >= 70
         assert match.eligibility_score >= 70
         assert match.hiring_score >= 60
+
+
+# ---------------------------------------------------------------------------
+# Per-country campaign collapse
+# ---------------------------------------------------------------------------
+class TestCampaignDeduplication:
+    """One opening reposted per country must not occupy four result slots.
+
+    Seen live: "Customer service manager (GR) / (CY) / (UK) / (PT)" from the
+    same employer filled positions 1-4, all with identical scores.
+    """
+
+    def _campaign(self, countries):
+        from careeros.sources.base import make_job
+        return [
+            make_job(
+                title=f"Customer service manager ({code})",
+                company="ParcelHero",
+                location=f"Remote — {name}",
+                description="Customer service manager. Operations and logistics. English required.",
+                url=f"https://jobicy.com/j/pc-{code.lower()}",
+                source="Jobicy",
+            )
+            for code, name in countries
+        ]
+
+    def test_country_variants_collapse_into_one(self):
+        from careeros.search import deduplicate_jobs
+
+        jobs = self._campaign([("GR", "Greece"), ("CY", "Cyprus"),
+                               ("UK", "UK"), ("PT", "Portugal")])
+        unique, removed = deduplicate_jobs(jobs)
+        assert len(unique) == 1
+        assert removed == 3
+        assert unique[0]["variant_count"] == 4
+
+    def test_variant_locations_are_recorded(self):
+        from careeros.search import deduplicate_jobs
+
+        unique, _ = deduplicate_jobs(self._campaign([("GR", "Greece"), ("PT", "Portugal")]))
+        assert len(unique[0]["variant_locations"]) == 2
+
+    def test_most_eligible_variant_is_kept(self):
+        from careeros.search import deduplicate_jobs
+
+        jobs = self._campaign([("GR", "Greece"), ("RO", "Romania")])
+        unique, _ = deduplicate_jobs(jobs)
+        kept = unique[0]["location"]["display_name"]
+        assert "Romania" in kept, "the variant he can actually work from must win"
+
+    def test_different_roles_are_not_merged(self):
+        from careeros.search import deduplicate_jobs
+        from careeros.sources.base import make_job
+
+        jobs = self._campaign([("GR", "Greece")]) + [
+            make_job(title="Back Office Specialist", company="Other Co",
+                     location="Timisoara, Romania", description="Back office.",
+                     url="https://x.com/9", source="Jooble")
+        ]
+        unique, removed = deduplicate_jobs(jobs)
+        assert len(unique) == 2 and removed == 0
+
+    def test_same_title_different_employer_is_not_merged(self):
+        from careeros.search import deduplicate_jobs
+        from careeros.sources.base import make_job
+
+        jobs = [
+            make_job(title="Customer service manager (GR)", company="ParcelHero",
+                     location="Remote — Greece", description="A", url="https://x.com/1", source="Jobicy"),
+            make_job(title="Customer service manager (GR)", company="Rival Ltd",
+                     location="Remote — Greece", description="B", url="https://x.com/2", source="Jobicy"),
+        ]
+        unique, _ = deduplicate_jobs(jobs)
+        assert len(unique) == 2
