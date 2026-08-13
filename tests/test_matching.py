@@ -288,7 +288,7 @@ class TestScoring:
         onsite = make_job(location="Berlin, Germany", description="operations role")
         a = calculate_match(onsite, Profile(open_to_relocation=False))
         b = calculate_match(onsite, Profile(open_to_relocation=True))
-        assert b.score > a.score
+        assert b.eligibility_score > a.eligibility_score
 
 
 class TestRemoteGreeceLabourMarket:

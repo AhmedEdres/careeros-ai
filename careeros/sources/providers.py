@@ -148,6 +148,12 @@ def _keyword_filter(text_fields: str, keywords: str, phrases: Optional[List[str]
     haystack = normalize_text(text_fields)
     candidates = [p for p in (phrases or []) if p and p.strip()]
 
+    # Heavy-driver titles are outside Ahmed's licence scope. Check the leading
+    # title signal only; do not let a buried truck/camion mention in a real
+    # operations description kill the job.
+    if any(haystack.startswith(prefix) for prefix in ("truck driver", "truck-driver", "sofer camion", "șofer camion", "camion driver", "bus driver", "sofer autobuz", "șofer autobuz", "tir driver")) and not contains_any(haystack[:180], ("category b", "categoria b", "cat b", "permis b")):
+        return False
+
     if not candidates:
         text = normalize_text(keywords).strip()
         if not text:

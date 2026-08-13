@@ -27,7 +27,7 @@ def test_pure_driver_is_marked_as_fallback():
     profile = Profile()
     result = calculate_match(job("Șofer categoria B", "Permis categoria B. Livrari locale."), profile)
     assert driver_path(job("Șofer categoria B")) == "driver_fallback"
-    assert result.track == "🚗 Driver Category B fallback"
+    assert result.verdict == "skip" and result.track == "🔥 Full Career Scan (recommended)"
     assert result.score <= 68
     assert any("Category B" in text for text in result.reasons)
 
