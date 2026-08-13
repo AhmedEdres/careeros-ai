@@ -23,14 +23,33 @@ _matching.ENGLISH_ABOVE_B2 = [
     "c1 english mandatory", "c2 english mandatory",
 ]
 
-hard_filter_job, calculate_match = wrap_matching(
+_base_hard_filter, _calculate_match_wrapped = wrap_matching(
     _hard_filter_job_v4, _calculate_match_v4, blend_scores
 )
 
 
-def calculate_match(job, profile, track=""):
-    result = calculate_match(job, profile, track)
+def _base_calculate_match(job, profile, track=""):
+    result = _calculate_match_wrapped(job, profile, track)
     return calibrate_result(result, job=job, profile=profile)
+
+
+from . import driving as _driving
+
+
+def hard_filter_job(job, profile, track=""):
+    """Keep Category B fallback roles while preserving all other hard gates."""
+    keep, reason = _base_hard_filter(job, profile, track)
+    if keep:
+        return True, ""
+    if "Different career track" in reason and _driving.should_keep_despite_negative_title(job, profile, track):
+        return True, ""
+    return False, reason
+
+
+def calculate_match(job, profile, track=""):
+    """Normal v4 score plus conservative Category B fallback enrichment."""
+    result = _base_calculate_match(job, profile, track)
+    return _driving.enrich_match_result(job, result, profile, track)
 
 
 _matching.hard_filter_job = hard_filter_job
@@ -45,6 +64,8 @@ from .search import (
     CAREER_PRESETS, SearchReport, SearchRequest, build_search_queries,
     deduplicate_jobs, run_search as _run_search_raw, score_and_filter,
 )
+
+_driving.configure_search_presets(CAREER_PRESETS)
 
 
 def run_search(request, max_workers=8):
