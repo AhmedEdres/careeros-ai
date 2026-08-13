@@ -436,12 +436,16 @@ def foreign_labour_market(location_text: str, title: str = "") -> Optional[str]:
     if _is_home_location(loc):
         return None
 
-    open_region = _is_open_region(loc)
+    # A specific country named in the *location* is that country's labour
+    # market. It wins even when an open region token ("Europe / EU / EEA /
+    # worldwide") appears next to it — "Remote — Europe, Netherlands" is a
+    # Dutch-market role, not EU-wide eligibility. See the comment in
+    # classify_remote_geography.
     named = _countries_named_in(loc)
-    if named and not open_region:
+    if named:
         return named[0]
 
-    if not open_region:
+    if not _is_open_region(loc):
         leftover = _leftover_place(location_text)
         if leftover and not _is_home_location(leftover):
             pretty = _PRETTY_MARKET.get(leftover, _EXTRA_FOREIGN_MARKETS.get(leftover))
@@ -477,15 +481,18 @@ def classify_remote_geography(location_text: str, description_text: str) -> str:
     if mentions_romania:
         return "remote_country"
 
-    # A single foreign country named in the *location* (e.g. "Remote — Greece")
-    # is that country's labour market, not EU-wide eligibility. It must win over
-    # generic "anywhere"/"global"/"worldwide" wording in the ad body, so it is
-    # checked before REMOTE_FRIENDLY.
+    # A single foreign country named in the *location* (e.g. "Remote — Greece"
+    # or "Remote — Europe, Netherlands") is that country's labour market, not
+    # EU-wide eligibility. It must win over both generic "anywhere"/"global"/
+    # "worldwide" wording in the ad body and over an accompanying open-region
+    # token: "Remote — Europe, Netherlands" is a Dutch-market role, so the
+    # country wins even though "Europe" is also present. This is checked before
+    # REMOTE_FRIENDLY so a country never falls through to remote_eu.
     single_country = [
         country for country in LOCATION_SYNONYMS["Europe"]
         if country not in _EU_REGION_TOKENS and contains_phrase(loc, country)
     ]
-    if single_country and not contains_any(loc, ["europe", "europa", "eu", "eea", "emea"]):
+    if single_country:
         return "remote_unclear"
 
     # "Remote — Europe/EU/EEA/worldwide" is real EU-wide eligibility.
