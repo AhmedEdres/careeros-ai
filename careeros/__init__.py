@@ -9,6 +9,15 @@ from .matching import blend_scores
 from .role_intelligence import wrap_matching
 from .quality import calibrate_result, deduplicate_display_jobs
 
+# Defensive compatibility guard: older deployments/custom profile states may
+# omit one of the seniority buckets. The matcher must never crash because a
+# taxonomy bucket is absent; an absent bucket simply behaves as empty.
+_matching.SENIORITY_PATTERNS = dict(getattr(_matching, "SENIORITY_PATTERNS", {}) or {})
+_matching.SENIORITY_PATTERNS.setdefault("leadership", ["manager", "director", "head of", "head", "lead", "chief", "vp", "vice president"])
+_matching.SENIORITY_PATTERNS.setdefault("senior", ["senior", "sr.", "sr ", "expert", "principal", "specialist senior"])
+_matching.SENIORITY_PATTERNS.setdefault("mid", ["specialist", "coordinator", "officer", "analyst", "administrator", "associate", "executive"])
+_matching.SENIORITY_PATTERNS.setdefault("junior", ["junior", "jr.", "jr ", "entry level", "entry-level", "intern", "trainee", "graduate"])
+
 _matching.ENGLISH_ABOVE_B2 = [
     "english c1 required", "english c2 required",
     "c1 english required", "c2 english required",
