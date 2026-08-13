@@ -2,6 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
+import re
 from .text import clean_html_text, contains_any, normalize_text
 
 @dataclass(frozen=True)
@@ -43,12 +44,15 @@ IT_STRONG = (
     "azure", "aws", "gcp", "python developer", "java developer", "c# developer",
 )
 IT_TITLE = (
+    "it governance", "it coordinator", "it locations", "it infrastructure", "it service", "it operations", "information security", "infosec", "quality coordinator emea - tires",
     "cloud engineer", "cloud platform", "devops", "site reliability", "software engineer",
     "software developer", "data engineer", "network engineer", "security engineer",
     "cyber security", "cybersecurity", "platform engineer", "systems engineer",
     "it engineer", "database administrator", "database engineer", "developer",
     "programmer", "infrastructure engineer", "azure cloud", "aws cloud",
 )
+
+_IT_GOVERNANCE_TITLE_RE = re.compile(r"\bit\b.+\b(governance|infrastructure|service|operations|coordinator|asset|locations?)\b", re.IGNORECASE)
 
 def _job_parts(job: Dict) -> Tuple[str, str]:
     title = normalize_text(str(job.get("title", "") or ""))
@@ -70,7 +74,7 @@ def assess_role(job: Dict) -> RoleAssessment:
     hr = _hits(body, HR_SIGNALS)
     marketing = _hits(body, MARKETING_SIGNALS)
     it_strong = _hits(body, IT_STRONG)
-    it_title = contains_any(title, IT_TITLE)
+    it_title = contains_any(title, IT_TITLE) or bool(_IT_GOVERNANCE_TITLE_RE.search(title))
     sales = len(sales_strong) * 4 + len(sales_support) * 2
     operations = len(ops) * 3
     finance_score = len(finance) * 3

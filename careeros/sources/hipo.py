@@ -55,7 +55,18 @@ def _salary_text(blob: str) -> str:
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
-            return match.group(0)
+            value_text = match.group(0)
+            nums = re.findall(r"\d[\d\s.,]*\d|\d", value_text)
+            try:
+                numeric = float(nums[0].replace(".", "").replace(",", "").replace(" ", "")) if nums else 0
+            except ValueError:
+                numeric = 0
+            norm = normalize_text(value_text)
+            if ("ron" in norm or "lei" in norm) and numeric < 1500:
+                continue
+            if "eur" in norm and numeric < 300:
+                continue
+            return value_text
     return ""
 
 
@@ -83,6 +94,10 @@ def _container(link):
 
 
 def _company(card, title: str) -> str:
+    title_n = normalize_text(title)
+    if "jobs from hipo" in title_n:
+        at = re.search(r"@\s*([^|]+)$", title)
+        return at.group(1).strip() if at else ""
     selectors = (
         "[class*=company]", "[class*=employer]", "[class*=firma]",
         "h3", "h4", "strong",
@@ -90,7 +105,7 @@ def _company(card, title: str) -> str:
     for selector in selectors:
         for node in card.select(selector):
             value = _text(node)
-            if value and normalize_text(value) != normalize_text(title):
+            if value and normalize_text(value) != normalize_text(title) and "jobs from hipo" not in normalize_text(value):
                 return value
     # Hipo cards often put the employer in a sibling link. Prefer a short
     # non-navigation-looking anchor rather than guessing from arbitrary text.
@@ -104,11 +119,16 @@ def _company(card, title: str) -> str:
 
 def _location(card, fallback: str) -> str:
     blob = _text(card)
-    lines = [part.strip() for part in re.split(r"\s{2,}|\n", blob) if part.strip()]
-    for line in lines:
-        low = normalize_text(line)
-        if any(token in low for token in _LOCATION_TOKENS):
-            return line[:220]
+    low_blob = normalize_text(blob)
+    for token in _LOCATION_TOKENS:
+        token_n = normalize_text(token)
+        if re.search(rf"(?<![a-z]){re.escape(token_n)}(?![a-z])", low_blob):
+            pretty = "Timișoara" if token_n in {"timisoara", "timișoara"} else token.title()
+            if "hybrid" in low_blob:
+                return f"Hybrid / {pretty}"
+            if "remote" in low_blob:
+                return f"Remote / {pretty}"
+            return pretty
     return fallback or "Romania"
 
 
@@ -127,6 +147,8 @@ def _parse(html: str, limit: int, fallback_location: str) -> List[Dict]:
         if url in seen:
             continue
         title = _text(link)
+        title = _DATE_RE.sub("", title).strip()
+        title = re.sub(r"\s+Jobs from Hipo.*$", "", title, flags=re.IGNORECASE).strip()
         if not title or len(title) > 220:
             continue
         card = _container(link)

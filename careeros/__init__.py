@@ -85,6 +85,26 @@ _TECHNICAL_TITLE_BLOCKS = (
     "it infrastructure", "systems engineer", "system administrator", "database administrator",
 )
 
+_AHMED_HEAVY_TITLE_RE = re.compile(
+    r"\b(?:c\s*[＋+&/]\s*e|c\s*e\b|categoria\s+c(?:e|\+e)?|category\s+c(?:e|\+e)?|cat\.?\s*c(?:e|\+e)?|"
+    r"categoria\s+d|category\s+d|cat\.?\s*d|d\s*[＋+&/]\s*e|permis\s+(?:c|ce|c\+e|d|de)\b|"
+    r"sofer\s+camion|șofer\s+camion|truck\s+driver|tir(?:\s+driver)?|sofer\s+autobuz|șofer\s+autobuz|"
+    r"bus\s+driver|coach\s+driver|camion|autobuz|autocar)\b", re.IGNORECASE)
+
+_AHMED_HEAVY_LICENCE_RE = re.compile(
+    r"(?:permis|licence|license|categoria|category|cat\.?)\s*(?:c\s*[＋+&/]\s*e|c\s*e|ce|c\b|d\b|d\s*[＋+&/]\s*e)", re.IGNORECASE)
+
+def _is_heavy_driver_role(job) -> bool:
+    title = normalize_text(str(job.get("title", "") or ""))
+    desc = normalize_text(str(job.get("description", "") or ""))[:800]
+    if _AHMED_HEAVY_TITLE_RE.search(title):
+        return True
+    if _AHMED_HEAVY_LICENCE_RE.search(f"{title} {desc}"):
+        if re.search(r"(?:categoria|category|cat\.?|permis)\s*b\b", f"{title} {desc}") and not re.search(r"(?:c\s*[＋+&/]\s*e|categoria\s+c|category\s+c|cat\.?\s*c|permis\s+c|categoria\s+d|category\s+d)", f"{title} {desc}"):
+            return False
+        return True
+    return False
+
 
 def _title_foreign_market(job) -> str:
     title = str(job.get("title") or "").lower()
@@ -109,6 +129,9 @@ from . import driving as _driving
 
 def hard_filter_job(job, profile, track=""):
     """Keep valid Category B fallbacks while enforcing Ahmed's hard gates."""
+    if _is_heavy_driver_role(job):
+        return False, "🔴 Heavy-vehicle driver role requires C/C+E/D/TIR licence"
+
     market = _title_foreign_market(job)
     if market:
         return False, f"🔴 Job is tied to the {market} labour market, not Romania"

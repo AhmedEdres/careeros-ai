@@ -147,10 +147,8 @@ def _detect_period(text: str) -> Optional[str]:
 
 
 def _infer_period(amount: float, currency: Optional[str]) -> str:
-    """Guess the period from magnitude when the text does not say."""
+    """Conservative fallback period inference; never infer RON hourly from size alone."""
     if currency == "ron":
-        if amount <= 400:
-            return "hour"
         if amount >= 60_000:
             return "year"
         return "month"
@@ -214,7 +212,14 @@ def parse_salary(
     if currency is None:
         currency = "ron" if not raw else (currency_hint or "ron")
     if period is None:
+        if currency == "ron" and min_amount < 1500:
+            return SalaryInfo(raw=raw, currency=currency, period=None, min_amount=min_amount, max_amount=max_amount)
+        if currency == "eur" and min_amount < 300:
+            return SalaryInfo(raw=raw, currency=currency, period=None, min_amount=min_amount, max_amount=max_amount)
         period = _infer_period(min_amount, currency)
+
+    if period == "month" and ((currency == "ron" and min_amount < 1500) or (currency == "eur" and min_amount < 300)):
+        return SalaryInfo(raw=raw, currency=currency, period=period, min_amount=min_amount, max_amount=max_amount)
 
     monthly_min = to_monthly_ron(min_amount, currency, period)
     monthly_max = to_monthly_ron(max_amount, currency, period) if max_amount else None

@@ -451,6 +451,8 @@ stats: Dict[str, int] = st.session_state.filter_stats or {}
 
 def render_job_card(index: int, job: Dict) -> None:
     match = job["_match"]
+    if getattr(match, "reject_reason", "") or getattr(match, "verdict", "") == "skip":
+        return
     url = job.get("redirect_url", "")
     title = job.get("title", "Untitled")
     company = safe_company_name(job.get("company"))
@@ -489,7 +491,7 @@ def render_job_card(index: int, job: Dict) -> None:
         if job.get("variant_count", 1) > 1:
             locations = ", ".join(job.get("variant_locations", [])[:4])
             extra = f" ({locations})" if locations else ""
-            meta.append(f"🌍 same role posted for {job['variant_count']} countries{extra}")
+            meta.append(f"🌍 same role seen in {job['variant_count']} locations{extra}")
         st.caption(" · ".join(m for m in meta if m))
 
         if getattr(match, "reject_reason", ""):

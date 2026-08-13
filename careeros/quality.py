@@ -17,7 +17,7 @@ REALITY_BLEND = {"match": 0.40, "eligibility": 0.25, "hiring": 0.35}
 
 # Recruiter-readiness ceilings. A high semantic match must not rescue a role
 # where the documented profile would normally fail the first screening pass.
-HIRING_CEILINGS = ((50, 65), (70, 75), (80, 85))
+HIRING_CEILINGS = ((50, 49), (60, 59), (70, 69))
 
 _COUNTRY_TAG_RE = re.compile(
     r"\s*[\(\[]\s*(?:[a-z]{2,3}|m/f/d|m/w/d|h/f|remote|hybrid|onsite|on-site)\s*[\)\]]\s*$",
@@ -350,6 +350,12 @@ def _apply_realism_penalty(result: MatchResult, penalty: int, risk: str, label: 
 
 def calibrate_result(result: MatchResult, job: Optional[Dict] = None, profile=None) -> MatchResult:
     """Apply recruiter-realism guardrails without changing score semantics."""
+    # SKIP/reject_reason is terminal. Never let calibration or the driver enricher
+    # resurrect a rejected role into a ranked card.
+    if getattr(result, "verdict", "") == "skip" or getattr(result, "reject_reason", ""):
+        result.score = min(int(getattr(result, "score", 0) or 0), 34)
+        result.verdict_label, result.verdict = "🔴 SKIP", "skip"
+        return result
     management_penalty, management_risk = _management_realism(job, profile)
     credential_penalty, credential_risk = _credential_gap(job, profile)
     specialized_penalty, specialized_risk = _specialized_transfer_penalty(job, profile)
@@ -374,6 +380,9 @@ def calibrate_result(result: MatchResult, job: Optional[Dict] = None, profile=No
         if result.hiring_score < minimum_hiring:
             score = min(score, ceiling)
             break
+
+    if management_penalty or _specialized_family(job) in {"it_technical", "software_data", "engineering"}:
+        score = min(score, 69)
 
     # Never force an 80+ score after a realism guardrail.  Previously this
     # exception could restore a high score after a meaningful mismatch.
