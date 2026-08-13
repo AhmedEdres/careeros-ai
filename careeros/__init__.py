@@ -1,6 +1,6 @@
 """CareerOS AI — job search, matching and application assistant."""
 
-__version__ = "4.1.0"
+__version__ = "4.2.0"
 
 from .profile import DEFAULT_PROFILE, Profile
 from . import matching as _matching
@@ -8,9 +8,7 @@ from .matching import MatchResult, calculate_match as _calculate_match_v4, hard_
 from .matching import blend_scores
 from .role_intelligence import wrap_matching
 
-# Keep the proven v4 engine intact and add a narrow semantic guardrail layer.
-# Search imports matching only after this package initializer has patched the
-# two public callables, so all existing search paths receive the same logic.
+# Keep the proven v4 engine intact and add the semantic guardrail layer.
 hard_filter_job, calculate_match = wrap_matching(
     _hard_filter_job_v4, _calculate_match_v4, blend_scores
 )
