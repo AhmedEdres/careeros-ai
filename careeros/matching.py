@@ -255,6 +255,8 @@ def classify_romanian_requirement(text: str) -> str:
         return "risky"
     if contains_any(text, ["romanian", "romana", "limba romana"]):
         return "risky"
+    if contains_any(text, ["english only", "english-speaking workplace", "english speaking workplace"]):
+        return "friendly"
     return "none"
 
 
@@ -534,6 +536,8 @@ def classify_remote_geography(location_text: str, description_text: str) -> str:
         country for country in LOCATION_SYNONYMS["Europe"]
         if country not in _EU_REGION_TOKENS and contains_phrase(loc, country)
     ]
+    if not single_country:
+        single_country = [country for country in _EXTRA_FOREIGN_MARKETS if contains_phrase(loc, country)]
     if single_country:
         return "remote_unclear"
 
@@ -683,6 +687,9 @@ def _score_location(loc: str, desc: str, profile: Profile, result: MatchResult) 
     result.remote = remote_class
     market = foreign_labour_market(loc, "", desc)
     if market:
+        if profile.open_to_relocation and remote_class == "not_remote":
+            result.reasons.append(f"🌍 {market} — relocation possible")
+            return 8
         result.warnings.append(f"🚫 Foreign labour market: {market}")
         return 0
 

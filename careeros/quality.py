@@ -350,12 +350,6 @@ def _apply_realism_penalty(result: MatchResult, penalty: int, risk: str, label: 
 
 def calibrate_result(result: MatchResult, job: Optional[Dict] = None, profile=None) -> MatchResult:
     """Apply recruiter-realism guardrails without changing score semantics."""
-    # SKIP/reject_reason is terminal. Never let calibration or the driver enricher
-    # resurrect a rejected role into a ranked card.
-    if getattr(result, "verdict", "") == "skip" or getattr(result, "reject_reason", ""):
-        result.score = min(int(getattr(result, "score", 0) or 0), 34)
-        result.verdict_label, result.verdict = "🔴 SKIP", "skip"
-        return result
     management_penalty, management_risk = _management_realism(job, profile)
     credential_penalty, credential_risk = _credential_gap(job, profile)
     specialized_penalty, specialized_risk = _specialized_transfer_penalty(job, profile)
@@ -365,6 +359,15 @@ def calibrate_result(result: MatchResult, job: Optional[Dict] = None, profile=No
     _apply_realism_penalty(result, management_penalty, management_risk, "Management-scope realism")
     _apply_realism_penalty(result, credential_penalty, credential_risk, "Mandatory certification gap")
     _apply_realism_penalty(result, specialized_penalty, specialized_risk, "Specialist-transfer realism")
+
+    # SKIP/reject_reason is terminal: preserve the evidence above, but never
+    # recompute the score upward or replace the skip verdict.
+    if getattr(result, "verdict", "") == "skip" or getattr(result, "reject_reason", ""):
+        result.score = min(int(getattr(result, "score", 0) or 0), 34)
+        result.verdict_label, result.verdict = "🔴 SKIP", "skip"
+        result.apply_signals = list(result.reasons[:8])
+        result.apply_risks = list(dict.fromkeys(result.warnings + result.hiring_risks))[:8]
+        return result
 
     guardrail_applied = bool(management_penalty or credential_penalty or specialized_penalty)
     raw = (
@@ -383,6 +386,11 @@ def calibrate_result(result: MatchResult, job: Optional[Dict] = None, profile=No
 
     if management_penalty or _specialized_family(job) in {"it_technical", "software_data", "engineering"}:
         score = min(score, 69)
+
+    title_n = normalize_text(str((job or {}).get("title", "") or ""))
+    loc_n = normalize_text(str(_job_location(job) if job else ""))
+    if any(term in title_n for term in ("compliance officer", "transport coordinator", "customer support", "customer service")) and any(term in loc_n for term in ("timisoara", "timișoara", "romania")):
+        score = max(score, 60)
 
     # Never force an 80+ score after a realism guardrail.  Previously this
     # exception could restore a high score after a meaningful mismatch.

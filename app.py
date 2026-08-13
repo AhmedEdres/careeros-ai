@@ -240,7 +240,7 @@ with st.sidebar:
     preset_options = list(track_labels)
     current_track = st.session_state.get("career_track", DEFAULT_TRACK)
     preset_index = preset_options.index(current_track) if current_track in preset_options else 0
-    preset = st.selectbox("Career track", preset_options, index=preset_index)
+    preset = st.radio("Career track", preset_options, index=preset_index)
     is_custom = preset == "📝 Custom keywords"
     if preset != st.session_state.get("career_track"):
         st.session_state.career_track = preset

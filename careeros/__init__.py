@@ -134,7 +134,7 @@ def hard_filter_job(job, profile, track=""):
         return False, "🔴 Heavy-vehicle driver role requires C/C+E/D/TIR licence"
 
     market = _title_foreign_market(job)
-    if market:
+    if market and not getattr(profile, "open_to_relocation", False):
         return False, f"🔴 Job is tied to the {market} labour market, not Romania"
 
     title = str(job.get("title") or "").lower()

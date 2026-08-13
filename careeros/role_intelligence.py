@@ -87,7 +87,7 @@ def assess_role(job: Dict) -> RoleAssessment:
     # Critical ordering: classify specialist IT roles before generic operations
     # signals. This prevents "support", "operations", "project" and "reporting"
     # words in an engineering description from inflating the candidate match.
-    if it_title or (len(it_strong) >= 2 and contains_any(title, ("engineer", "architect", "developer", "administrator", "specialist"))):
+    if it_title:
         return RoleAssessment("it_engineering", "high", sales_score=sales, operations_score=operations, finance_score=finance_score, support_score=support_score, legal_score=legal_score, hr_score=hr_score, marketing_score=marketing_score, it_score=it_score, transferability="low", reasons=(f"IT/engineering signals: {', '.join(it_strong[:5])}",))
 
     title_sales = contains_any(title, ["sales manager", "sales director", "head of sales", "account executive", "business development", "sdr", "bdr", "sales representative", "sales executive", "revenue manager", "revenue director", "chief revenue officer", "cro manager"])

@@ -123,7 +123,7 @@ def _location(card, fallback: str) -> str:
     for token in _LOCATION_TOKENS:
         token_n = normalize_text(token)
         if re.search(rf"(?<![a-z]){re.escape(token_n)}(?![a-z])", low_blob):
-            pretty = "Timișoara" if token_n in {"timisoara", "timișoara"} else token.title()
+            pretty = "Timisoara" if token_n in {"timisoara", "timișoara"} else token.title()
             if "hybrid" in low_blob:
                 return f"Hybrid / {pretty}"
             if "remote" in low_blob:
