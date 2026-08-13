@@ -13,7 +13,7 @@ PROVIDERS["romania_boards"] = ProviderSpec(
     fetch_romania_boards,
     default_on=True,
     supports_location=True,
-    client_side_filter=False,
+    client_side_filter=True,
     help_text="Public Romania-board discovery with HTTP-first parsing and optional Selenium fallback.",
 )
 
