@@ -1,4 +1,4 @@
-"""Candidate profile model and the keyword taxonomy used for scoring."""
+"""Candidate profile model and the keyword taxonomy used by the matching engine."""
 
 from __future__ import annotations
 
@@ -110,7 +110,6 @@ SKILL_GROUPS: Dict[str, Dict] = {
     ]},
 }
 
-# Kept as a mapping because matching.py indexes these four buckets directly.
 SENIORITY_PATTERNS = {
     "leadership": ["manager", "director", "head of", "head", "lead", "chief", "vp", "vice president"],
     "senior": ["senior", "sr.", "sr ", "expert", "principal", "specialist senior"],
@@ -148,6 +147,10 @@ NEGATIVE_TITLES = [
     "it infrastructure coordinator", "it infrastructure manager", "it service manager", "it service management", "it operations manager",
     "technical operations manager", "it regional coordinator", "regional operations manager", "plant operations manager",
     "manufacturing operations manager", "warehouse operations manager", "supply chain operations manager", "production operations manager",
+    # Language-specific title patterns for languages Ahmed does not speak.
+    # Romanian/German boards commonly encode a hard requirement as "cu Limba Germană".
+    "cu limba germana", "german speaking", "german language", "german-speaking",
+    "deutschsprachig", "mit deutsch", "mit deutscher sprache", "kundenservice deutsch",
 ]
 
 LOCATION_SYNONYMS: Dict[str, List[str]] = {
