@@ -110,6 +110,14 @@ SKILL_GROUPS: Dict[str, Dict] = {
     ]},
 }
 
+# Kept as a mapping because matching.py indexes these four buckets directly.
+SENIORITY_PATTERNS = {
+    "leadership": ["manager", "director", "head of", "head", "lead", "chief", "vp", "vice president"],
+    "senior": ["senior", "sr.", "sr ", "expert", "principal", "specialist senior"],
+    "mid": ["specialist", "coordinator", "officer", "analyst", "administrator", "associate", "executive"],
+    "junior": ["junior", "jr.", "jr ", "entry level", "entry-level", "intern", "trainee", "graduate"],
+}
+
 NEGATIVE_TITLES = [
     "software developer", "software engineer", "senior developer", "senior engineer", "lead developer", "staff engineer",
     "principal engineer", "machine learning engineer", "data scientist", "head of engineering", "engineering manager", "engineering lead",
@@ -121,7 +129,6 @@ NEGATIVE_TITLES = [
     "python developer", "php developer", "c developer", "golang developer", "rust developer", "ios developer", "android developer",
     "mobile developer", "qa automation", "test automation engineer", "embedded engineer", "cloud architect", "ux designer", "ui designer",
     "graphic designer", "3d artist", "medical doctor", "nurse", "asistent medical", "dentist", "pharmacist", "truck driver",
-    # IMPORTANT: ordinary Category-B driver titles are intentionally NOT here.
     "construction worker", "electrician", "plumber", "mechanic", "welder", "sudor", "lacatus", "operator cnc", "cnc operator",
     "chef", "bucatar", "waiter", "ospatar", "barista", "security guard", "agent de securitate", "cleaner", "femeie de serviciu",
     "chief revenue officer", "cro manager", "cro director", "revenue manager", "revenue director", "revenue operations manager",
@@ -156,4 +163,3 @@ ROMANIAN_FRIENDLY = ["romanian a1", "romanian a2", "romana a1", "romana a2", "ba
 ENGLISH_ABOVE_B2 = ["english c1", "english c2", "fluent english", "native english", "native-level english", "english at c1", "english at c2", "proficient english"]
 REMOTE_FRIENDLY = ["remote — europe", "remote europe", "remote - europe", "remote — eu", "remote eu", "remote - eu", "remote — romania", "remote romania", "remote - romania", "remote — eea", "remote eea", "remote — emea", "remote emea", "remote — cet", "remote cet", "worldwide", "global", "anywhere"]
 REMOTE_RESTRICTED = ["us only", "usa only", "united states only", "us residents", "us-based", "us based", "canada only", "uk only", "uk residents", "india only", "australia only", "must be located in the us", "must be based in the us"]
-SENIORITY_PATTERNS = ["senior", "lead", "manager", "director", "head of"]
