@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from difflib import SequenceMatcher
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from .matching import MatchResult, blend_scores, priority_band
 from .text import normalize_text, safe_company_name, text_hash
@@ -23,6 +23,35 @@ _COUNTRY_TAG_RE = re.compile(
 )
 _ROLE_NOISE_RE = re.compile(
     r"\b(?:m/f/d|m/w/d|h/f|full[- ]?time|part[- ]?time|urgent|new)\b", re.IGNORECASE
+)
+
+# "Manager" is not automatically people management: account manager,
+# customer success manager and case manager are commonly individual-
+# contributor/client roles. Keep those transferable pathways intact.
+_MANAGEMENT_TITLE_RE = re.compile(
+    r"\b(?:operations|operational|finance|financial|compliance|legal|logistics|supply\s+chain|"
+    r"warehouse|procurement|production|manufacturing|service\s+delivery|shared\s+services|"
+    r"department|regional|program|programme|project)\s+manager\b|"
+    r"\b(?:head\s+of|director\s+of|vp\s+of|vice\s+president\s+of|chief\s+\w+\s+officer)\b|"
+    r"\b(?:team\s+lead|people\s+manager|line\s+manager|supervisor)\b",
+    re.IGNORECASE,
+)
+
+_MANAGEMENT_EVIDENCE = (
+    "managed a team", "managed team", "team of", "direct reports", "people management",
+    "staff management", "supervised staff", "supervised a team", "led a team",
+    "led teams", "team leadership", "hiring and performance", "performance reviews",
+    "workforce management", "p&l responsibility", "p&l ownership", "budget ownership",
+    "budget management", "department head", "managed employees", "managed staff",
+)
+
+# Credentials are treated as a gap only when the advertisement makes them a
+# real gate. Preferred/desirable certifications remain a soft signal.
+_REQUIRED_CREDENTIAL_PATTERNS = (
+    r"(?:pmp|prince2|acca|cpa|cfa|cia|cisa|itil|six\s+sigma|iso\s*27001)"
+    r"[^.]{0,60}(?:required|mandatory|must\s+have|essential)",
+    r"(?:required|mandatory|must\s+have|essential)[^.]{0,60}"
+    r"(?:pmp|prince2|acca|cpa|cfa|cia|cisa|itil|six\s+sigma|iso\s*27001)",
 )
 
 
@@ -133,9 +162,79 @@ def deduplicate_display_jobs(jobs: List[Dict]) -> Tuple[List[Dict], int]:
     return kept, removed
 
 
-def calibrate_result(result: MatchResult) -> MatchResult:
-    """Make the displayed overall score reflect hiring reality without
-    destroying the existing meaning of the three underlying scores."""
+def _profile_evidence_text(profile) -> str:
+    if profile is None:
+        return ""
+    skills = " ".join(str(x or "") for x in (getattr(profile, "skills", []) or []))
+    highlights = " ".join(str(x or "") for x in (getattr(profile, "highlights", []) or []))
+    return normalize_text(f"{skills} {highlights}")
+
+
+def _management_realism(job: Optional[Dict], profile) -> Tuple[int, str]:
+    """Return a conservative hiring penalty for people-management titles.
+
+    Ten years of experience is valuable, but it does not by itself prove team
+    management. This guardrail specifically addresses the production failure
+    where "Operations Manager" could reach the high-80s from keyword overlap.
+    """
+    if not job or profile is None:
+        return 0, ""
+    title = normalize_text(str(job.get("title", "") or ""))
+    description = normalize_text(str(job.get("description", "") or ""))
+    if not _MANAGEMENT_TITLE_RE.search(title):
+        return 0, ""
+
+    evidence = _profile_evidence_text(profile)
+    has_people_management = any(term in evidence for term in _MANAGEMENT_EVIDENCE)
+    penalty = 0
+    if not has_people_management:
+        penalty = 10
+        if any(term in description for term in ("manage a team", "manage a team of", "direct reports", "people management", "lead a team")):
+            penalty += 5
+        return penalty, "⚠️ Management scope is not demonstrated in the documented profile"
+
+    return 0, ""
+
+
+def _credential_gap(job: Optional[Dict], profile) -> Tuple[int, str]:
+    """Detect hard certification gates without penalising optional credentials."""
+    if not job or profile is None:
+        return 0, ""
+    description = normalize_text(str(job.get("description", "") or ""))
+    if not description:
+        return 0, ""
+    if not any(re.search(pattern, description, flags=re.IGNORECASE) for pattern in _REQUIRED_CREDENTIAL_PATTERNS):
+        return 0, ""
+
+    evidence = _profile_evidence_text(profile)
+    credentials = ("pmp", "prince2", "acca", "cpa", "cfa", "cia", "cisa", "itil", "six sigma", "iso 27001")
+    if any(credential in evidence for credential in credentials):
+        return 0, ""
+    return 8, "⚠️ Posting has a mandatory certification gate not evidenced in the profile"
+
+
+def calibrate_result(result: MatchResult, job: Optional[Dict] = None, profile=None) -> MatchResult:
+    """Make the displayed overall score reflect hiring reality.
+
+    The existing three scores remain visible and keep their original meaning.
+    The final score adds two conservative real-world checks: demonstrated
+    people-management scope for true management titles and mandatory
+    certification gates. This prevents keyword-rich stretch roles from being
+    ranked like direct applications while leaving ordinary specialist roles
+    unchanged.
+    """
+    management_penalty, management_risk = _management_realism(job, profile)
+    credential_penalty, credential_risk = _credential_gap(job, profile)
+
+    if management_penalty:
+        result.hiring_score = max(0, result.hiring_score - management_penalty)
+        result.hiring_risks.append(management_risk)
+        result.adjustments.append(("Management-scope realism", -management_penalty))
+    if credential_penalty:
+        result.hiring_score = max(0, result.hiring_score - credential_penalty)
+        result.hiring_risks.append(credential_risk)
+        result.adjustments.append(("Mandatory certification gap", -credential_penalty))
+
     raw = (
         REALITY_BLEND["match"] * result.match_score
         + REALITY_BLEND["eligibility"] * result.eligibility_score
@@ -144,8 +243,8 @@ def calibrate_result(result: MatchResult) -> MatchResult:
     score = int(round(max(0, min(100, raw))))
 
     # For already-strong recruiter-readiness, preserve v4's proven high-fit
-    # behavior. The new blend mainly corrects the borderline cases where a
-    # huge keyword match used to overwhelm a weak hiring signal.
+    # behavior. The new blend mainly corrects borderline cases where a large
+    # keyword match used to overwhelm a weak hiring signal.
     if result.hiring_score >= 80:
         score = blend_scores(result.match_score, result.eligibility_score, result.hiring_score)
 
@@ -155,7 +254,8 @@ def calibrate_result(result: MatchResult) -> MatchResult:
             break
 
     # A clearly strong local fit should remain high priority even when the ad
-    # is terse; confidence should not become an artificial penalty.
+    # is terse. It does not override the management/credential guardrails
+    # because those intentionally lower the hiring score first.
     if result.match_score >= 80 and result.eligibility_score >= 80 and result.hiring_score >= 65:
         score = max(score, 80)
 
