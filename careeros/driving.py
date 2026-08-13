@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import Dict
 from .text import contains_any, normalize_text
 
-DRIVER_PATTERNS = ("sofer", "driver", "courier", "curier", "livrator", "delivery driver", "distributie", "van driver", "route driver", "transport driver", "driver categoria b", "sofer cat b", "sofer categoria b", "permis categoria b")
+DRIVER_TITLE_PATTERNS = ("sofer", "șofer", "driver", "courier", "curier", "livrator", "delivery driver", "distributie", "distribuție", "van driver", "route driver", "transport driver", "driver categoria b", "sofer cat b", "sofer categoria b", "permis categoria b")
 HYBRID_PATTERNS = ("field agent", "agent teren", "merchandiser", "field service", "field coordinator", "logistics assistant", "logistics coordinator", "transport coordinator", "dispecer transport", "fleet coordinator", "distribution coordinator", "delivery coordinator")
 CATEGORY_B_PATTERNS = ("category b", "categoria b", "cat b", "permis b", "permis categoria b", "driving licence b", "driving license b", "driver license b")
-PURE_DRIVER_PATTERNS = ("sofer", "driver", "courier", "curier", "livrator", "delivery driver", "van driver", "route driver", "transport driver")
+PURE_DRIVER_PATTERNS = ("sofer", "șofer", "driver", "courier", "curier", "livrator", "delivery driver", "van driver", "route driver", "transport driver")
 
 
 def _text(job: Dict):
@@ -16,8 +16,8 @@ def _text(job: Dict):
 
 
 def is_driver_role(job: Dict) -> bool:
-    title, full = _text(job)
-    return contains_any(title, DRIVER_PATTERNS) or contains_any(full, DRIVER_PATTERNS)
+    title, _ = _text(job)
+    return contains_any(title, DRIVER_TITLE_PATTERNS)
 
 
 def is_hybrid_role(job: Dict) -> bool:
@@ -31,8 +31,8 @@ def is_pure_driver(job: Dict) -> bool:
 
 
 def requires_category_b(job: Dict) -> bool:
-    _, full = _text(job)
-    return contains_any(full, CATEGORY_B_PATTERNS) or is_driver_role(job)
+    title, full = _text(job)
+    return contains_any(full, CATEGORY_B_PATTERNS) or contains_any(title, DRIVER_TITLE_PATTERNS)
 
 
 def driver_path(job: Dict) -> str:
@@ -75,9 +75,14 @@ def enrich_match_result(job: Dict, result, profile, track: str = ""):
 
 
 def configure_search_presets(presets: Dict[str, list]) -> None:
-    driver_queries = ["sofer categoria B", "driver category B", "livrator distributie"]
+    """Inject one driver query into the first six queries actually searched."""
     for key in ("🔥 Full Career Scan (recommended)", "🏭 Logistics & Production"):
-        if key in presets:
-            for query in driver_queries:
-                if query not in presets[key]:
-                    presets[key].append(query)
+        if key not in presets:
+            continue
+        existing = [q for q in presets[key] if q not in {"sofer categoria B", "driver category B", "livrator distributie"}]
+        # Preserve the most important professional queries, then add the
+        # fallback query inside MAX_QUERIES so it is not silently truncated.
+        if len(existing) >= 6:
+            existing = existing[:5]
+        existing.append("sofer categoria B")
+        presets[key] = existing
