@@ -2,6 +2,7 @@ from careeros import DEFAULT_PROFILE, calculate_match, hard_filter_job
 from careeros.salary import parse_salary
 from careeros.matching import foreign_labour_market
 from careeros.search import CAREER_PRESETS
+from careeros.driving import enrich_match_result
 
 
 def job(title, location, description="", salary=""):
@@ -42,6 +43,22 @@ def test_operations_manager_without_team_evidence_is_not_strong():
     assert result.score <= 69
     assert getattr(result, "verdict", "") not in {"strong", "apply"}
     assert result.salary is None or not result.salary.has_value
+
+
+def test_manager_title_does_not_claim_people_management():
+    result = calculate_match(
+        job("Operations Manager", "Timișoara", "Operations, production and SAP. No team-management evidence."),
+        DEFAULT_PROFILE,
+    )
+    assert not any("Leadership role — fits" in reason for reason in result.reasons)
+    assert any("management" in warning.lower() for warning in result.warnings + result.hiring_risks)
+
+
+def test_heavy_driver_enricher_is_a_noop():
+    result = calculate_match(job("Sofer camion Categoria C+E - Germania", "Timișoara", "C+E licence required"), DEFAULT_PROFILE)
+    before = (result.score, result.track, result.verdict, result.reject_reason)
+    enriched = enrich_match_result(job("Sofer camion Categoria C+E - Germania", "Timișoara", "C+E licence required"), result, DEFAULT_PROFILE)
+    assert (enriched.score, enriched.track, enriched.verdict, enriched.reject_reason) == before
 
 
 def test_forty_ron_is_not_a_salary():
