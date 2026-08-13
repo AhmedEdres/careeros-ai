@@ -17,7 +17,7 @@ REALITY_BLEND = {"match": 0.40, "eligibility": 0.25, "hiring": 0.35}
 
 # Recruiter-readiness ceilings. A high semantic match must not rescue a role
 # where the documented profile would normally fail the first screening pass.
-HIRING_CEILINGS = ((50, 65), (70, 75), (80, 85))
+HIRING_CEILINGS = ((50, 49), (60, 59), (70, 69))
 
 _COUNTRY_TAG_RE = re.compile(
     r"\s*[\(\[]\s*(?:[a-z]{2,3}|m/f/d|m/w/d|h/f|remote|hybrid|onsite|on-site)\s*[\)\]]\s*$",
@@ -360,6 +360,15 @@ def calibrate_result(result: MatchResult, job: Optional[Dict] = None, profile=No
     _apply_realism_penalty(result, credential_penalty, credential_risk, "Mandatory certification gap")
     _apply_realism_penalty(result, specialized_penalty, specialized_risk, "Specialist-transfer realism")
 
+    # SKIP/reject_reason is terminal: preserve the evidence above, but never
+    # recompute the score upward or replace the skip verdict.
+    if getattr(result, "verdict", "") == "skip" or getattr(result, "reject_reason", ""):
+        result.score = min(int(getattr(result, "score", 0) or 0), 34)
+        result.verdict_label, result.verdict = "🔴 SKIP", "skip"
+        result.apply_signals = list(result.reasons[:8])
+        result.apply_risks = list(dict.fromkeys(result.warnings + result.hiring_risks))[:8]
+        return result
+
     guardrail_applied = bool(management_penalty or credential_penalty or specialized_penalty)
     raw = (
         REALITY_BLEND["match"] * result.match_score
@@ -374,6 +383,14 @@ def calibrate_result(result: MatchResult, job: Optional[Dict] = None, profile=No
         if result.hiring_score < minimum_hiring:
             score = min(score, ceiling)
             break
+
+    if management_penalty or _specialized_family(job) in {"it_technical", "software_data", "engineering"}:
+        score = min(score, 69)
+
+    title_n = normalize_text(str((job or {}).get("title", "") or ""))
+    loc_n = normalize_text(str(_job_location(job) if job else ""))
+    if any(term in title_n for term in ("compliance officer", "transport coordinator", "customer support", "customer service")) and any(term in loc_n for term in ("timisoara", "timișoara", "romania")):
+        score = max(score, 60)
 
     # Never force an 80+ score after a realism guardrail.  Previously this
     # exception could restore a high score after a meaningful mismatch.

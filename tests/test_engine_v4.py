@@ -95,8 +95,8 @@ class TestThreeScores:
             ),
             profile,
         )
-        assert match.score == blend_scores(
-            match.match_score, match.eligibility_score, match.hiring_score
+        assert match.score == round(
+            0.40 * match.match_score + 0.25 * match.eligibility_score + 0.35 * match.hiring_score
         )
 
 # ---------------------------------------------------------------------------

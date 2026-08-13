@@ -255,6 +255,8 @@ def classify_romanian_requirement(text: str) -> str:
         return "risky"
     if contains_any(text, ["romanian", "romana", "limba romana"]):
         return "risky"
+    if contains_any(text, ["english only", "english-speaking workplace", "english speaking workplace"]):
+        return "friendly"
     return "none"
 
 
@@ -327,6 +329,25 @@ _EXTRA_FOREIGN_MARKETS = {
     "united states": "USA",
     "usa": "USA",
     "canada": "Canada",
+    "olanda": "Netherlands",
+    "tara de jos": "Netherlands",
+    "germania": "Germany",
+    "ungaria": "Hungary",
+    "italia": "Italy",
+    "franta": "France",
+    "franța": "France",
+    "belgia": "Belgium",
+    "spania": "Spain",
+    "cehia": "Czechia",
+    "polonia": "Poland",
+    "austria": "Austria",
+    "grecia": "Greece",
+    "suedia": "Sweden",
+    "danemarca": "Denmark",
+    "irlanda": "Ireland",
+    "portugalia": "Portugal",
+    "anglia": "UK",
+    "marea britanie": "UK",
     "india": "India",
     "uae": "UAE",
     "united arab emirates": "UAE",
@@ -360,6 +381,25 @@ _EXTRA_FOREIGN_MARKETS = {
 }
 
 _PRETTY_MARKET = {
+    "olanda": "Netherlands",
+    "tara de jos": "Netherlands",
+    "germania": "Germany",
+    "ungaria": "Hungary",
+    "italia": "Italy",
+    "franta": "France",
+    "franța": "France",
+    "belgia": "Belgium",
+    "spania": "Spain",
+    "cehia": "Czechia",
+    "polonia": "Poland",
+    "grecia": "Greece",
+    "suedia": "Sweden",
+    "danemarca": "Denmark",
+    "irlanda": "Ireland",
+    "portugalia": "Portugal",
+    "anglia": "UK",
+    "marea britanie": "UK",
+
     "uk": "UK", "united kingdom": "UK", "england": "UK", "britain": "UK",
     "great britain": "UK", "scotland": "UK", "wales": "UK",
     "usa": "USA", "united states": "USA",
@@ -425,35 +465,39 @@ def _title_market(title: str) -> Optional[str]:
     return None
 
 
-def foreign_labour_market(location_text: str, title: str = "") -> Optional[str]:
-    """Return the foreign country a listing is tied to, or None if reachable.
-
-    A role is reachable when it is in Timișoara / Romania, or remote with an
-    open region (Europe / EU / worldwide). ``Remote — Greece`` / ``(UK)`` is
-    that country's labour market — he cannot do it from Timișoara.
-    """
+def foreign_labour_market(location_text: str, title: str = "", description: str = "") -> Optional[str]:
+    """Return the actual foreign labour market; title country beats agency cities."""
     loc = normalize_text(location_text)
+    title_n = normalize_text(title)
+    desc_n = normalize_text(description)[:400]
+
+    # A foreign destination in the title is authoritative even when a recruiter
+    # board puts Timișoara/Arad/etc. in the location field. A clear Romania/home
+    # statement in the title wins back to the Romanian market.
+    title_markets = _countries_named_in(title_n)
+    tagged = _title_market(title_n)
+    if tagged and tagged not in title_markets:
+        title_markets.append(tagged)
+    if title_markets and not _is_home_location(title_n):
+        return title_markets[0]
+
+    named = _countries_named_in(loc)
+    if named:
+        return named[0] if not _is_home_location(title_n) else None
+
     if _is_home_location(loc):
         return None
 
-    # A specific country named in the *location* is that country's labour
-    # market. It wins even when an open region token ("Europe / EU / EEA /
-    # worldwide") appears next to it — "Remote — Europe, Netherlands" is a
-    # Dutch-market role, not EU-wide eligibility. See the comment in
-    # classify_remote_geography.
-    named = _countries_named_in(loc)
-    if named:
-        return named[0]
+    if desc_n and not _is_home_location(desc_n):
+        desc_markets = _countries_named_in(desc_n)
+        if desc_markets:
+            return desc_markets[0]
 
     if not _is_open_region(loc):
         leftover = _leftover_place(location_text)
         if leftover and not _is_home_location(leftover):
             pretty = _PRETTY_MARKET.get(leftover, _EXTRA_FOREIGN_MARKETS.get(leftover))
             return pretty or leftover.title()
-
-        tagged = _title_market(title)
-        if tagged:
-            return tagged
     return None
 
 
@@ -492,6 +536,8 @@ def classify_remote_geography(location_text: str, description_text: str) -> str:
         country for country in LOCATION_SYNONYMS["Europe"]
         if country not in _EU_REGION_TOKENS and contains_phrase(loc, country)
     ]
+    if not single_country:
+        single_country = [country for country in _EXTRA_FOREIGN_MARKETS if contains_phrase(loc, country)]
     if single_country:
         return "remote_unclear"
 
@@ -587,7 +633,7 @@ def hard_filter_job(job: Dict, profile: Profile, track: str = "") -> Tuple[bool,
 
     raw_location = _job_location(job)
     raw_title = str(job.get("title", "") or "")
-    market = foreign_labour_market(raw_location, raw_title)
+    market = foreign_labour_market(raw_location, raw_title, desc)
     if market:
         home = profile.location or "Timișoara"
         if remote_class != "not_remote":
@@ -639,6 +685,13 @@ def _score_location(loc: str, desc: str, profile: Profile, result: MatchResult) 
     home = normalize_text(profile.location)
     remote_class = classify_remote_geography(loc, desc)
     result.remote = remote_class
+    market = foreign_labour_market(loc, "", desc)
+    if market:
+        if profile.open_to_relocation and remote_class == "not_remote":
+            result.reasons.append(f"🌍 {market} — relocation possible")
+            return 8
+        result.warnings.append(f"🚫 Foreign labour market: {market}")
+        return 0
 
     if home and contains_phrase(loc, home):
         result.reasons.append(f"📍 {profile.location} — perfect location match")

@@ -240,7 +240,7 @@ with st.sidebar:
     preset_options = list(track_labels)
     current_track = st.session_state.get("career_track", DEFAULT_TRACK)
     preset_index = preset_options.index(current_track) if current_track in preset_options else 0
-    preset = st.selectbox("Career track", preset_options, index=preset_index)
+    preset = st.radio("Career track", preset_options, index=preset_index)
     is_custom = preset == "📝 Custom keywords"
     if preset != st.session_state.get("career_track"):
         st.session_state.career_track = preset
@@ -451,6 +451,8 @@ stats: Dict[str, int] = st.session_state.filter_stats or {}
 
 def render_job_card(index: int, job: Dict) -> None:
     match = job["_match"]
+    if getattr(match, "reject_reason", "") or getattr(match, "verdict", "") == "skip":
+        return
     url = job.get("redirect_url", "")
     title = job.get("title", "Untitled")
     company = safe_company_name(job.get("company"))
@@ -489,7 +491,7 @@ def render_job_card(index: int, job: Dict) -> None:
         if job.get("variant_count", 1) > 1:
             locations = ", ".join(job.get("variant_locations", [])[:4])
             extra = f" ({locations})" if locations else ""
-            meta.append(f"🌍 same role posted for {job['variant_count']} countries{extra}")
+            meta.append(f"🌍 same role seen in {job['variant_count']} locations{extra}")
         st.caption(" · ".join(m for m in meta if m))
 
         if getattr(match, "reject_reason", ""):
