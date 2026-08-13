@@ -21,6 +21,7 @@ def _engine_version() -> str:
 __engine_version__ = _engine_version()
 
 from .profile import DEFAULT_PROFILE, Profile
+from .text import normalize_text
 from . import matching as _matching
 from .matching import MatchResult, calculate_match as _calculate_match_v4, hard_filter_job as _hard_filter_job_v4, priority_band
 from .matching import blend_scores
