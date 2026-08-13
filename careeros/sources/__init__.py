@@ -4,6 +4,7 @@ from .base import SourceResult, build_session, days_since, make_job, parse_date
 from .providers import PROVIDERS, ProviderSpec, fetch_source
 from .romania_boards import fetch_romania_boards
 from .hipo import fetch_hipo
+from .anofm import fetch_anofm
 
 # Romanian local-board coverage. Keep these adapters behind the same
 # ProviderSpec/SourceResult contract so the search engine and UI remain
@@ -28,6 +29,20 @@ PROVIDERS["hipo"] = ProviderSpec(
     supports_location=True,
     client_side_filter=False,
     help_text="Romanian job board with local, remote/hybrid and salary-rich listings.",
+)
+
+# ANOFM / Mediere is a first-class public Romanian source. It is fetched once
+# per search (not once per expanded query) and filtered locally using the same
+# relevance taxonomy as the other whole-board sources.
+PROVIDERS["anofm"] = ProviderSpec(
+    "anofm",
+    "🇷🇴 ANOFM — Mediere",
+    "ANOFM / Mediere",
+    fetch_anofm,
+    default_on=True,
+    supports_location=True,
+    client_side_filter=True,
+    help_text="Official Romanian public job postings; no API key. Structured requirements are preserved for realistic matching.",
 )
 
 __all__ = [
