@@ -1,12 +1,13 @@
 """CareerOS AI — job search, matching and application assistant."""
 
-__version__ = "4.3.0"
+__version__ = "4.3.1"
 
 from .profile import DEFAULT_PROFILE, Profile
 from . import matching as _matching
 from .matching import MatchResult, calculate_match as _calculate_match_v4, hard_filter_job as _hard_filter_job_v4, priority_band
 from .matching import blend_scores
 from .role_intelligence import wrap_matching
+from .quality import calibrate_result, deduplicate_display_jobs
 
 # B2 is a usable working level. Do not reject a job merely because an ad says
 # "fluent English" or mentions C1 as a preferred/alternative qualification.
@@ -28,9 +29,16 @@ _matching.ENGLISH_ABOVE_B2 = [
 ]
 
 # Keep the proven v4 engine intact and add the semantic guardrail layer.
-hard_filter_job, calculate_match = wrap_matching(
+hard_filter_job, _calculate_match_wrapped = wrap_matching(
     _hard_filter_job_v4, _calculate_match_v4, blend_scores
 )
+
+
+def calculate_match(job, profile, track=""):
+    """Public matcher: proven v4 score + production reality calibration."""
+    return calibrate_result(_calculate_match_wrapped(job, profile, track))
+
+
 _matching.hard_filter_job = hard_filter_job
 _matching.calculate_match = calculate_match
 
@@ -52,9 +60,19 @@ from .search import (
     SearchRequest,
     build_search_queries,
     deduplicate_jobs,
-    run_search,
+    run_search as _run_search_raw,
     score_and_filter,
 )
+
+
+def run_search(request, max_workers=8):
+    """Search wrapper with a final conservative cross-source dedup pass."""
+    report = _run_search_raw(request, max_workers=max_workers)
+    report.jobs, extra_removed = deduplicate_display_jobs(report.jobs)
+    report.duplicates_removed += extra_removed
+    return report
+
+
 from .tracker import Application, ApplicationStore, STATUS_FLOW
 
 __all__ = [
