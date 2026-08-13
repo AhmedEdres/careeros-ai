@@ -9,6 +9,7 @@
     }
   },
   "updateContentCommand": "pip3 install --user -r requirements-dev.txt && echo '✅ Requirements installed'",
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y chromium chromium-driver",
   "postAttachCommand": {
     "server": "streamlit run app.py --server.enableCORS false --server.enableXsrfProtection false"
   },
