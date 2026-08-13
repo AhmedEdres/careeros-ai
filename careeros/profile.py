@@ -40,8 +40,6 @@ class Profile:
     target_salary_max: int = 7000
     open_to_remote: bool = True
     open_to_relocation: bool = False
-    # Languages the candidate does NOT speak. A posting that *requires* one of
-    # these is effectively closed to him, however well it matches otherwise.
     other_languages: List[str] = field(default_factory=lambda: [
         "french", "german", "dutch", "italian", "spanish", "portuguese",
         "polish", "czech", "hungarian", "greek", "turkish", "russian",
@@ -76,23 +74,19 @@ class Profile:
         try:
             return CEFR_ORDER.index(self.romanian_level)
         except ValueError:
-            return 1  # treat unknown as A1
+            return 1
 
     @property
     def english_rank(self) -> int:
         try:
             return CEFR_ORDER.index(self.english_level)
         except ValueError:
-            return 4  # treat unknown as B2
+            return 4
 
 
 DEFAULT_PROFILE = Profile()
 
 
-# ---------------------------------------------------------------------------
-# Skill taxonomy. Weights sum above the cap on purpose: breadth is rewarded but
-# the dimension is capped so a keyword-stuffed listing cannot dominate.
-# ---------------------------------------------------------------------------
 SKILL_GROUPS: Dict[str, Dict] = {
     "operations_support": {
         "label": "Operations / Customer Support",
@@ -175,14 +169,14 @@ SKILL_GROUPS: Dict[str, Dict] = {
     },
 }
 
-# Titles that clearly belong to another career track.
+# Titles that clearly belong to another career track. This list is deliberately
+# title-only: a sales/revenue keyword in a description must never hide a good
+# Operations/Finance job. The goal is to stop obvious career-family false
+# positives such as "Senior CRO Manager" without changing the scoring engine.
 NEGATIVE_TITLES = [
     "software developer", "software engineer", "senior developer",
     "senior engineer", "lead developer", "staff engineer",
     "principal engineer", "machine learning engineer", "data scientist",
-    # Engineering leadership / product / C-level are not Ahmed's track — the
-    # engine must not reward the "Head of" word as leadership for roles that
-    # are actually software/product management he cannot take.
     "head of engineering", "engineering manager", "engineering lead",
     "engineering director", "director of engineering", "software engineering manager",
     "software team lead", "vp of engineering", "vp engineering",
@@ -204,6 +198,24 @@ NEGATIVE_TITLES = [
     "cnc operator",
     "chef", "bucatar", "waiter", "ospatar", "barista", "security guard",
     "agent de securitate", "cleaner", "femeie de serviciu",
+
+    # Career-family gate: these titles are Sales/Revenue/Marketing/HR roles,
+    # not Finance/Compliance, Operations/Back Office, Support/BPO or
+    # Logistics/Production. They were previously able to score too highly
+    # because words such as "manager", "operations" and "English" inflated
+    # seniority/skills despite the actual career family being wrong.
+    "chief revenue officer", "cro manager", "cro director", "revenue manager",
+    "revenue director", "revenue operations manager", "revenue operations director",
+    "sales director", "sales manager", "head of sales", "vp of sales",
+    "vice president of sales", "chief sales officer", "sales executive",
+    "account executive", "sales development representative", "sales representative",
+    "business development representative", "business development manager",
+    "business development director", "sdr", "bdr", "account executive",
+    "marketing manager", "marketing director", "head of marketing", "vp of marketing",
+    "chief marketing officer", "digital marketing", "performance marketing",
+    "brand manager", "growth manager", "growth director", "content manager",
+    "recruiter", "talent acquisition", "hr manager", "hr business partner",
+    "human resources manager", "head of hr", "people partner", "people operations manager",
 ]
 
 LOCATION_SYNONYMS: Dict[str, List[str]] = {
@@ -221,13 +233,11 @@ LOCATION_SYNONYMS: Dict[str, List[str]] = {
         "portugal", "romania", "ireland", "sweden", "denmark", "finland",
         "norway", "switzerland", "hungary", "croatia", "greece", "bulgaria",
         "slovakia", "slovenia", "lithuania", "latvia", "estonia",
-        # UK was missing — "Remote — UK" was then treated as EU-wide.
         "uk", "united kingdom", "england", "britain", "great britain",
         "scotland", "wales", "cyprus", "malta", "luxembourg", "iceland",
     ],
 }
 
-# --- Romanian language requirement buckets -------------------------------
 ROMANIAN_REJECT = [
     "romanian c1", "romanian c2", "romana c1", "romana c2",
     "fluent romanian", "romanian fluent", "fluent in romanian",
@@ -246,9 +256,6 @@ ROMANIAN_RISKY = [
     "romanian and english", "romanian & english",
 ]
 
-# English above Ahmed's B2. "English required" / working English is fine.
-# Standalone "fluent English" is left out: EU CS ads use it for B2 operational
-# English. Native / C1 / C2 / mother tongue is not.
 ENGLISH_ABOVE_B2 = [
     "english c1", "english c2", "c1 english", "c2 english",
     "english native", "native english", "native speaker of english",
@@ -266,7 +273,6 @@ ROMANIAN_FRIENDLY = [
     "romanian not required", "english only", "english is the working language",
 ]
 
-# --- Remote geography -----------------------------------------------------
 REMOTE_FRIENDLY = [
     "remote europe", "europe remote", "remote eu", "eu remote",
     "remote romania", "romania remote", "remote eea", "remote emea",
