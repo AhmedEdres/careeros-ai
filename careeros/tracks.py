@@ -62,15 +62,17 @@ LOGISTICS_ALLOWED_TITLES = {
 
 # Base evidence scale used by the v3 dimension functions. Track tables
 # rescale these onto their own 100-point budget.
+# Ahmed opportunity filter: location 15 / Arabic 20 / English 10 / skills 20 /
+# education 5 / salary 10 / seniority 10 / career relevance 10.
 BASE_DIMENSION_MAX: Dict[str, int] = {
-    "location": 20,
-    "skills": 25,
-    "arabic": 15,
+    "location": 15,
+    "skills": 20,
+    "arabic": 20,
     "english": 10,
     "experience": 10,
     "salary": 10,
     "education": 5,
-    "relevance": 5,
+    "relevance": 10,
 }
 
 TRACK_WEIGHTS: Dict[str, Dict[str, int]] = {

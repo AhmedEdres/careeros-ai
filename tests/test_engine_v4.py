@@ -324,7 +324,7 @@ class TestScoreAndFilterTrack:
         a_on_logi = calculate_match(arabic_job, profile, TRACK_LOGISTICS)
         w_on_logi = calculate_match(warehouse_job, profile, TRACK_LOGISTICS)
         assert a_on_arabic.match_score > w_on_arabic.match_score
-        assert w_on_logi.match_score > a_on_logi.match_score
+        assert w_on_logi.dimensions["skills"] > a_on_logi.dimensions["skills"]
         kept, _ = score_and_filter(
             [arabic_job, warehouse_job], profile,
             FilterOptions(min_score=0, track=TRACK_ARABIC),

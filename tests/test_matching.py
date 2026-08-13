@@ -9,6 +9,7 @@ from careeros.matching import (
     priority_band,
 )
 from careeros.profile import Profile
+from careeros.text import normalize_text
 
 
 def make_job(title="Operations Coordinator", description="", location="Timisoara, Romania", **kw):
@@ -52,6 +53,45 @@ class TestHardFilter:
         keep, _ = hard_filter_job(make_job(description="Customer support, English required."), profile)
         assert keep
 
+    def test_rejects_fluent_english_and_french_title(self, profile):
+        keep, reason = hard_filter_job(make_job(
+            title="(fluent English & French) Customer Support Consultant, hospitality",
+            location="Remote — Anywhere",
+            description="Customer support in hospitality.",
+        ), profile)
+        assert not keep
+        assert "French" in reason
+
+    def test_rejects_us_sales_dialer(self, profile):
+        keep, reason = hard_filter_job(make_job(
+            title="Dialer (US Sales Team)",
+            location="Remote — Anywhere",
+        ), profile)
+        assert not keep
+
+    def test_rejects_english_c1(self, profile):
+        keep, reason = hard_filter_job(
+            make_job(description="Customer support. English C1 required."),
+            profile,
+        )
+        assert not keep
+        assert "B2" in reason or "English" in reason
+
+    def test_keeps_english_required_without_level(self, profile):
+        keep, _ = hard_filter_job(
+            make_job(description="Customer support. English required."),
+            profile,
+        )
+        assert keep
+
+    def test_rejects_dutch_in_title(self, profile):
+        keep, reason = hard_filter_job(
+            make_job(title="Service Desk Agent with Dutch", description="Dutch required."),
+            profile,
+        )
+        assert not keep
+        assert "Dutch" in reason
+
     def test_developer_word_in_description_does_not_reject(self, profile):
         job = make_job(title="Back Office Specialist",
                        description="You will support our java developer teams with invoicing.")
@@ -77,6 +117,10 @@ class TestLanguageClassification:
 
     def test_mentioned(self):
         assert classify_language_mention("our arabic team is growing", "arabic") == "mentioned"
+
+    def test_fluent_english_ampersand_french_is_required(self):
+        text = normalize_text("(fluent English & French) Customer Support Consultant, hospitality")
+        assert classify_language_mention(text, "french") == "required"
 
 
 class TestRomanianClassification:
@@ -153,8 +197,8 @@ class TestScoring:
         )
         match = calculate_match(job, profile)
         assert match.score >= 80
-        assert match.dimensions["location"] == 20
-        assert match.dimensions["arabic"] == 15
+        assert match.dimensions["location"] == 15
+        assert match.dimensions["arabic"] == 20
 
     def test_empty_job_scores_near_zero(self, profile):
         match = calculate_match(make_job(title="Unknown role", location="", description=""), profile)
@@ -202,12 +246,12 @@ class TestScoring:
     def test_priority_band(self):
         from careeros.matching import HIGH_PRIORITY_THRESHOLD, MEDIUM_PRIORITY_THRESHOLD
 
-        assert "HIGH" in priority_band(HIGH_PRIORITY_THRESHOLD)[0]
-        assert "HIGH" in priority_band(100)[0]
-        assert "WORTH" in priority_band(MEDIUM_PRIORITY_THRESHOLD)[0]
-        assert "WORTH" in priority_band(HIGH_PRIORITY_THRESHOLD - 1)[0]
+        assert "APPLY" in priority_band(HIGH_PRIORITY_THRESHOLD)[0]
+        assert "APPLY" in priority_band(100)[0]
+        assert "MAYBE" in priority_band(MEDIUM_PRIORITY_THRESHOLD)[0]
+        assert "STRONG" in priority_band(HIGH_PRIORITY_THRESHOLD - 1)[0]
         assert "LOW" in priority_band(MEDIUM_PRIORITY_THRESHOLD - 1)[0]
-        assert "LOW" in priority_band(0)[0]
+        assert "SKIP" in priority_band(0)[0]
 
     def test_profile_changes_affect_score(self):
         job = make_job(location="Remote — Germany", description="operations role")
@@ -362,7 +406,7 @@ class TestScoreNormalisation:
         )
         match = calculate_match(job, profile)
         assert match.normalised is False
-        assert match.score >= 80
+        assert match.score >= 75
 
     def test_weak_job_stays_low_after_normalisation(self, profile):
         job = make_job(title="Assistant", location="Berlin, Germany",

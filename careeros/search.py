@@ -59,8 +59,8 @@ CAREER_PRESETS: Dict[str, List[str]] = {
         "customer support",
         "customer service",
         "client support",
-        "help desk",
-        "call center",
+        "arabic customer support",
+        "shared services",
     ],
     "🗣️ Arabic-Speaking Roles": [
         "arabic customer support",
@@ -394,12 +394,12 @@ def run_search(request: SearchRequest, max_workers: int = 8) -> SearchReport:
 
 @dataclass
 class FilterOptions:
-    min_score: int = 20
-    location_filter: str = "All"
+    min_score: int = 35
+    location_filter: str = "Romania"
     romanian_filter: str = "Any"
     max_age_days: int = 0            # 0 == no limit
     only_with_salary: bool = False
-    hide_language_blocked: bool = False
+    hide_language_blocked: bool = True
     hide_applied: bool = False
     applied_urls: Sequence[str] = field(default_factory=list)
     sort_by: str = "Best match"
@@ -445,7 +445,15 @@ def score_and_filter(
         if options.location_filter != "All":
             synonyms = LOCATION_SYNONYMS.get(options.location_filter, [])
             location_text = normalize_text(str((job.get("location") or {}).get("display_name", "")))
-            if synonyms and not contains_any(location_text, synonyms):
+            # Romania / Timișoara means "I work from here": keep remote that
+            # is explicitly open to Romania or Europe-wide.
+            reachable_remote = match.remote in {"remote_country", "remote_eu"}
+            local_hit = synonyms and contains_any(location_text, synonyms)
+            if options.location_filter in {"Romania", "Timișoara"}:
+                if not local_hit and not reachable_remote:
+                    stats["filtered_location"] += 1
+                    continue
+            elif synonyms and not local_hit:
                 stats["filtered_location"] += 1
                 continue
 
