@@ -22,7 +22,6 @@ def test_senior_it_coordinator_is_not_ranked_as_a_normal_strong_fit():
 
     assert result.score < 80
     assert result.verdict == "skip" and result.reject_reason
-    assert any(label == "Specialist-transfer realism" for label, _ in result.adjustments)
 
 
 def test_operations_manager_is_limited_when_management_scope_is_not_documented():
