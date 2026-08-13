@@ -1,0 +1,61 @@
+name: Apply Ahmed precision patch
+on:
+  push:
+    branches:
+      - fix/4.3.6-precision-track-filter
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest -r requirements.txt
+      - name: Apply patch
+        run: python scripts/apply_ahmed_435_precision.py
+      - name: Run full test suite
+        run: python -m pytest -q
+      - name: Replay live top-10 regression titles
+        run: |
+          python - <<'PY'
+          from careeros import DEFAULT_PROFILE, calculate_match, hard_filter_job
+          titles = [
+              ("Sofer profesionist C+E - Olanda", "Timișoara, Iași (Iași), Brașov și alte 2 orașe"),
+              ("Sofer camion Categoria C+E -Germania", "Timișoara, România"),
+              ("SOFER AUTOBUZ - OLANDA", "Timișoara, România"),
+              ("Senior Regional IT Governance and Quality Coordinator EMEA - Tires", "Timisoara"),
+              ("Operations Manager @Continental", "Timisoara"),
+              ("Compliance Officer EMEA (m/f/d)", "Timisoara"),
+              ("Transport coordinator", "Timișoara"),
+              ("Customer Support Specialist", "Timișoara, România"),
+              ("Customer Service Support", "Timișoara, România"),
+              ("Șofer categoria B", "Timișoara"),
+          ]
+          for title, loc in titles:
+              j={"title":title,"description":"English required. Category B where relevant.","location":{"display_name":loc},"company":{"display_name":"X"},"salary_text":"8000 RON net","category":{"label":""}}
+              keep, reason = hard_filter_job(j, DEFAULT_PROFILE)
+              if keep:
+                  r=calculate_match(j, DEFAULT_PROFILE)
+                  print(title, "KEEP=True", "score=", r.score, "verdict=", r.verdict, "reason=", reason)
+              else:
+                  print(title, "KEEP=False", reason)
+          PY
+      - name: Commit patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f scripts/apply_ahmed_435_precision.py .github/workflows/apply-ahmed-precision.yml
+          git add -A
+          git commit -m "Fix Ahmed filter: reject foreign C+E/D jobs, IT governance, and fake STRONG" || exit 0
+          git push origin HEAD:${{ github.ref_name }}
