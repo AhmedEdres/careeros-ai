@@ -15,6 +15,7 @@ class RoleAssessment:
     legal_score: int = 0
     hr_score: int = 0
     marketing_score: int = 0
+    it_score: int = 0
     transferability: str = "adjacent"
     reasons: Tuple[str, ...] = ()
 
@@ -26,6 +27,28 @@ SUPPORT_SIGNALS = ("customer support", "customer service", "customer care", "cli
 LEGAL_SIGNALS = ("legal assistant", "legal counsel", "paralegal", "jurist", "legal operations", "contract administration", "contract administrator", "legal compliance")
 HR_SIGNALS = ("recruitment", "recruiter", "talent acquisition", "human resources", "hr business partner", "people partner", "employee relations", "payroll hr")
 MARKETING_SIGNALS = ("digital marketing", "performance marketing", "brand management", "campaign", "content marketing", "seo", "sem", "social media marketing", "marketing strategy")
+
+# These are deliberately high-signal IT/engineering indicators. Generic words
+# such as "system", "platform", "data", "technology" or "project" are NOT
+# enough on their own, because they occur in ordinary operations/compliance ads.
+IT_STRONG = (
+    "cloud engineer", "cloud platform engineer", "azure engineer", "aws engineer",
+    "devops engineer", "site reliability engineer", "sre engineer", "software engineer",
+    "backend engineer", "frontend engineer", "full stack engineer", "data engineer",
+    "machine learning engineer", "network engineer", "security engineer",
+    "cyber security", "cybersecurity", "cloud architect", "solutions architect",
+    "technical architect", "platform engineer", "systems engineer", "it engineer",
+    "database administrator", "database engineer", "software developer", "developer",
+    "programmer", "infrastructure engineer", "terraform", "kubernetes", "docker",
+    "azure", "aws", "gcp", "python developer", "java developer", "c# developer",
+)
+IT_TITLE = (
+    "cloud engineer", "cloud platform", "devops", "site reliability", "software engineer",
+    "software developer", "data engineer", "network engineer", "security engineer",
+    "cyber security", "cybersecurity", "platform engineer", "systems engineer",
+    "it engineer", "database administrator", "database engineer", "developer",
+    "programmer", "infrastructure engineer", "azure cloud", "aws cloud",
+)
 
 def _job_parts(job: Dict) -> Tuple[str, str]:
     title = normalize_text(str(job.get("title", "") or ""))
@@ -46,6 +69,8 @@ def assess_role(job: Dict) -> RoleAssessment:
     legal = _hits(body, LEGAL_SIGNALS)
     hr = _hits(body, HR_SIGNALS)
     marketing = _hits(body, MARKETING_SIGNALS)
+    it_strong = _hits(body, IT_STRONG)
+    it_title = contains_any(title, IT_TITLE)
     sales = len(sales_strong) * 4 + len(sales_support) * 2
     operations = len(ops) * 3
     finance_score = len(finance) * 3
@@ -53,23 +78,31 @@ def assess_role(job: Dict) -> RoleAssessment:
     legal_score = len(legal) * 4
     hr_score = len(hr) * 4
     marketing_score = len(marketing) * 4
+    it_score = len(it_strong) * 5 + (12 if it_title else 0)
+
+    # Critical ordering: classify specialist IT roles before generic operations
+    # signals. This prevents "support", "operations", "project" and "reporting"
+    # words in an engineering description from inflating the candidate match.
+    if it_title or (len(it_strong) >= 2 and contains_any(title, ("engineer", "architect", "developer", "administrator", "specialist"))):
+        return RoleAssessment("it_engineering", "high", sales_score=sales, operations_score=operations, finance_score=finance_score, support_score=support_score, legal_score=legal_score, hr_score=hr_score, marketing_score=marketing_score, it_score=it_score, transferability="low", reasons=(f"IT/engineering signals: {', '.join(it_strong[:5])}",))
+
     title_sales = contains_any(title, ["sales manager", "sales director", "head of sales", "account executive", "business development", "sdr", "bdr", "sales representative", "sales executive", "revenue manager", "revenue director", "chief revenue officer", "cro manager"])
     title_account = contains_any(title, ["account manager", "client manager", "customer success manager"])
     title_accounting = contains_any(title, ["accountant", "accounting specialist", "bookkeeper", "accounts payable", "accounts receivable", "general ledger"])
     if title_sales or sales_strong or sales >= max(6, operations + 2):
-        return RoleAssessment("sales_revenue", "high", sales_score=sales, operations_score=operations, finance_score=finance_score, support_score=support_score, hr_score=hr_score, marketing_score=marketing_score, transferability="low", reasons=(f"sales signals: {', '.join((sales_strong + sales_support)[:4])}",))
+        return RoleAssessment("sales_revenue", "high", sales_score=sales, operations_score=operations, finance_score=finance_score, support_score=support_score, legal_score=legal_score, hr_score=hr_score, marketing_score=marketing_score, it_score=it_score, transferability="low", reasons=(f"sales signals: {', '.join((sales_strong + sales_support)[:4])}",))
     if title_account:
         if operations >= 6 or support_score >= 6:
-            return RoleAssessment("client_operations", "high", sales_score=sales, operations_score=operations, support_score=support_score, finance_score=finance_score, transferability="transferable", reasons=("account/client title supported by operations or service evidence",))
-        return RoleAssessment("ambiguous_account", "medium", sales_score=sales, operations_score=operations, support_score=support_score, finance_score=finance_score, transferability="adjacent", reasons=("account/client title lacks enough operational evidence to rule out sales",))
+            return RoleAssessment("client_operations", "high", sales_score=sales, operations_score=operations, support_score=support_score, finance_score=finance_score, it_score=it_score, transferability="transferable", reasons=("account/client title supported by operations or service evidence",))
+        return RoleAssessment("ambiguous_account", "medium", sales_score=sales, operations_score=operations, support_score=support_score, finance_score=finance_score, it_score=it_score, transferability="adjacent", reasons=("account/client title lacks enough operational evidence to rule out sales",))
     if title_accounting:
-        return RoleAssessment("accounting", "high", sales_score=sales, operations_score=operations, finance_score=finance_score, transferability="adjacent", reasons=("accounting function detected; profile evidence is stronger in tax/compliance than accounting",))
+        return RoleAssessment("accounting", "high", sales_score=sales, operations_score=operations, finance_score=finance_score, it_score=it_score, transferability="adjacent", reasons=("accounting function detected; profile evidence is stronger in tax/compliance than accounting",))
     scores = {"finance_compliance": finance_score, "operations": operations, "customer_support": support_score, "legal": legal_score, "hr": hr_score, "marketing": marketing_score}
     family, best = max(scores.items(), key=lambda item: item[1])
     if best == 0:
-        return RoleAssessment("general", "low", transferability="unknown")
+        return RoleAssessment("general", "low", it_score=it_score, transferability="unknown")
     transfer = "transferable" if family in {"finance_compliance", "operations", "customer_support", "legal"} else "low"
-    return RoleAssessment(family, "medium", sales_score=sales, operations_score=operations, finance_score=finance_score, support_score=support_score, legal_score=legal_score, hr_score=hr_score, marketing_score=marketing_score, transferability=transfer, reasons=(f"{family.replace('_', ' ')} signals: {best}",))
+    return RoleAssessment(family, "medium", sales_score=sales, operations_score=operations, finance_score=finance_score, support_score=support_score, legal_score=legal_score, hr_score=hr_score, marketing_score=marketing_score, it_score=it_score, transferability=transfer, reasons=(f"{family.replace('_', ' ')} signals: {best}",))
 
 def _candidate_directness(profile, role: RoleAssessment) -> str:
     skills = {normalize_text(s) for s in (profile.skills or [])}
@@ -89,6 +122,17 @@ def _candidate_directness(profile, role: RoleAssessment) -> str:
 def apply_role_intelligence(job: Dict, profile, result, blend_scores) -> object:
     role = assess_role(job)
     directness = _candidate_directness(profile, role)
+    if role.family == "it_engineering":
+        result.reject_reason = "Specialist IT/engineering role detected — core technical requirements are not supported by the documented profile"
+        result.warnings.insert(0, "🔴 Specialist IT/engineering function — outside the supported career profile")
+        result.hiring_risks.insert(0, "🚫 Core engineering/cloud/software requirements are not evidenced in the profile")
+        result.score = min(result.score, 15)
+        result.match_score = min(result.match_score, 15)
+        result.eligibility_score = min(result.eligibility_score, 35)
+        result.hiring_score = min(result.hiring_score, 25)
+        result.verdict_label, result.verdict = "🔴 SKIP", "skip"
+        result.adjustments.append(("Specialist IT/engineering hard mismatch", -50))
+        return result
     if role.family == "sales_revenue":
         result.reject_reason = "Sales/revenue function detected — outside the selected career families"
         result.warnings.insert(0, "🔴 Sales/revenue function — not a target career family")
@@ -133,7 +177,7 @@ def wrap_matching(original_hard_filter, original_calculate_match, blend_scores):
         if not keep:
             return keep, reason
         role = assess_role(job)
-        if role.family in {"sales_revenue", "hr", "marketing"}:
+        if role.family in {"sales_revenue", "hr", "marketing", "it_engineering"}:
             label = role.family.replace("_", " ").title()
             return False, f"🔴 Different career track ({label})"
         return True, ""
