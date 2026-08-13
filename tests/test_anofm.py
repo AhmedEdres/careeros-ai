@@ -42,10 +42,10 @@ def test_anofm_parses_structured_requirements_and_keeps_timisoara():
     })
 
     result = fetch_anofm(
-        keywords="production operator",
+        keywords="operator productie",
         location="Timisoara",
         limit=10,
-        phrases=["production operator"],
+        phrases=["operator productie"],
         session=session,
     )
 
