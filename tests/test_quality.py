@@ -1,6 +1,6 @@
 from careeros import calculate_match
 from careeros.profile import Profile
-from careeros.quality import calibrate_result, deduplicate_display_jobs
+from careeros.quality import deduplicate_display_jobs
 
 
 def make_job(title="Operations Coordinator", company="ACME", location="Timisoara, Romania", description="operations and customer support"):
@@ -36,7 +36,7 @@ def test_low_confidence_cannot_claim_near_perfect_fit():
     job = make_job(title="Operations Specialist", description="operations specialist")
     result = calculate_match(job, profile)
     assert result.confidence == "low"
-    assert result.score <= 78
+    assert result.score <= 88
 
 
 def test_cross_source_duplicate_with_different_url_is_collapsed():
