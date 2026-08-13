@@ -1,6 +1,27 @@
 """CareerOS AI — job search, matching and application assistant."""
 
-__version__ = "4.3.2"
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+__version__ = "4.3.3"
+
+# Stable fingerprint of the matching package. Keep this visible in the UI so
+# an open Streamlit tab can be compared with the deployed code after changes.
+
+def _engine_version() -> str:
+    digest = hashlib.md5()
+    root = Path(__file__).parent
+    for path in sorted(root.rglob("*.py")):
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            continue
+    return digest.hexdigest()[:12]
+
+
+__engine_version__ = _engine_version()
 
 from .profile import DEFAULT_PROFILE, Profile
 from . import matching as _matching
@@ -104,8 +125,34 @@ def run_search(request, max_workers=8):
 
 from .tracker import Application, ApplicationStore, STATUS_FLOW
 
+
+# Restore the compact release/build marker that was useful for tracking which
+# deployed UI was being tested. The wrapper is intentionally limited to the
+# CareerOS title and does not alter other Streamlit title calls.
+def _install_version_marker() -> None:
+    try:
+        import streamlit as st
+        if getattr(st.title, "_careeros_version_marker", False):
+            return
+        original_title = st.title
+
+        def versioned_title(*args, **kwargs):
+            result = original_title(*args, **kwargs)
+            if args and args[0] == "🎯 CareerOS AI":
+                st.caption(f"v{__version__} · engine {__engine_version__}")
+            return result
+
+        versioned_title._careeros_version_marker = True
+        st.title = versioned_title
+    except Exception:
+        # UI decoration must never break the matching/search engine.
+        return
+
+
+_install_version_marker()
+
 __all__ = [
-    "__version__", "Profile", "DEFAULT_PROFILE", "MatchResult",
+    "__version__", "__engine_version__", "Profile", "DEFAULT_PROFILE", "MatchResult",
     "calculate_match", "hard_filter_job", "priority_band", "SalaryInfo",
     "parse_salary", "format_salary", "CAREER_PRESETS", "SearchRequest",
     "SearchReport", "build_search_queries", "deduplicate_jobs", "run_search",
