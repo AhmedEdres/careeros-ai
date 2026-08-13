@@ -35,8 +35,9 @@ hard_filter_job, _calculate_match_wrapped = wrap_matching(
 
 
 def calculate_match(job, profile, track=""):
-    """Public matcher: proven v4 score + production reality calibration."""
-    return calibrate_result(_calculate_match_wrapped(job, profile, track))
+    """Public matcher: v4 + role intelligence + production reality calibration."""
+    result = _calculate_match_wrapped(job, profile, track)
+    return calibrate_result(result, job=job, profile=profile)
 
 
 _matching.hard_filter_job = hard_filter_job
