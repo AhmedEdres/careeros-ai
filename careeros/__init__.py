@@ -70,7 +70,7 @@ _FOREIGN_TITLE_MARKETS = {
     "anglia": "UK", "regatul unit": "UK", "united kingdom": "UK", "marea britanie": "UK", "britain": "UK",
     "belgia": "Belgium", "belgium": "Belgium", "spania": "Spain", "spain": "Spain",
     "italia": "Italy", "italy": "Italy", "portugalia": "Portugal", "portugal": "Portugal",
-    "elvetia": "Switzerland", "elvetia": "Switzerland", "switzerland": "Switzerland",
+    "elvetia": "Switzerland", "switzerland": "Switzerland",
     "polonia": "Poland", "poland": "Poland", "polska": "Poland", "grecia": "Greece", "greece": "Greece",
     "cehia": "Czechia", "czechia": "Czechia", "ungaria": "Hungary", "hungary": "Hungary",
     "suedia": "Sweden", "sweden": "Sweden", "danemarca": "Denmark", "denmark": "Denmark",
@@ -122,7 +122,32 @@ def _title_foreign_market(job) -> str:
 def _base_calculate_match(job, profile, track=""):
     safe_job = _safe_job_for_matching(job)
     result = _calculate_match_wrapped(safe_job, profile, track)
-    return calibrate_result(result, job=safe_job, profile=profile)
+    result = calibrate_result(result, job=safe_job, profile=profile)
+
+    # A manager/head/director/supervisor title is not evidence of people
+    # management. Quality already applies the management realism guardrail;
+    # remove the misleading leadership-copy claim and its small seniority
+    # contribution without adding a second management penalty.
+    title_n = normalize_text(safe_job.get("title", ""))
+    desc_n = normalize_text(safe_job.get("description", ""))
+    management_title = bool(re.search(r"\b(?:manager|head|director|supervisor)\b", title_n))
+    management_evidence = any(
+        phrase in desc_n
+        for phrase in (
+            "managed a team", "managed team", "team of", "direct reports", "people management",
+            "staff management", "supervised staff", "supervised a team", "led a team",
+            "led teams", "team leadership", "hiring and performance", "performance reviews",
+            "workforce management", "p&l responsibility", "p&l ownership", "budget ownership",
+            "budget management", "department head", "managed employees", "managed staff",
+        )
+    )
+    if management_title and not management_evidence:
+        result.reasons = [r for r in result.reasons if "Leadership role — fits" not in r]
+        result.warnings.append("⚠️ Management scope is not demonstrated in the documented profile")
+        result.score = max(0, int(result.score) - 1)
+        if result.verdict in {"apply", "strong"} and result.score < 70:
+            result.verdict_label, result.verdict = priority_band(result.score, result.confidence)
+    return result
 
 
 from . import driving as _driving
