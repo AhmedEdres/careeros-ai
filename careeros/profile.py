@@ -28,11 +28,15 @@ class Profile:
     target_salary_max: int = 7000
     open_to_remote: bool = True
     open_to_relocation: bool = False
-    # Languages Ahmed actually speaks beyond the explicit Arabic/English/Romanian
-    # level fields. Keep this empty: the old default incorrectly listed every
-    # EU language as if Ahmed spoke it, defeating the "hide languages I don't
-    # speak" hard filter.
-    other_languages: List[str] = field(default_factory=list)
+    # Languages in this list are languages Ahmed does NOT speak and therefore
+    # must be checked as potential hard blockers. Arabic/English/Romanian are
+    # represented by their dedicated level fields above.
+    other_languages: List[str] = field(default_factory=lambda: [
+        "french", "german", "dutch", "italian", "spanish", "portuguese",
+        "polish", "czech", "hungarian", "greek", "turkish", "russian",
+        "swedish", "norwegian", "danish", "finnish", "hebrew", "chinese",
+        "japanese", "korean", "bulgarian", "serbian", "croatian", "ukrainian",
+    ])
     skills: List[str] = field(default_factory=lambda: [
         "operations", "client management", "financial compliance",
         "customer service", "customer support", "excel", "sap", "erp", "sql",
@@ -146,10 +150,8 @@ NEGATIVE_TITLES = [
     "it infrastructure coordinator", "it infrastructure manager", "it service manager", "it service management", "it operations manager",
     "technical operations manager", "it regional coordinator", "regional operations manager", "plant operations manager",
     "manufacturing operations manager", "warehouse operations manager", "supply chain operations manager", "production operations manager",
-    # Language-specific title patterns for languages Ahmed does not speak.
     "cu limba germana", "german speaking", "german language", "german-speaking",
     "deutschsprachig", "mit deutsch", "mit deutscher sprache", "kundenservice deutsch",
-    # Heavy-vehicle driving is not a Category B fallback.
     "sofer camion", "șofer camion", "truck driver", "tir driver", "sofer profesionist c+e",
     "sofer c+e", "șofer c+e", "autobuz", "bus driver", "categoria d", "category d",
     "categoria ce", "category ce",
