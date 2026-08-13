@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
-__version__ = "4.3.4"
+__version__ = "4.3.5"
 
-# Stable fingerprint of the matching package. Keep this visible in the UI so
-# an open Streamlit tab can be compared with the deployed code after changes.
 def _engine_version() -> str:
     digest = hashlib.md5()
     root = Path(__file__).parent
@@ -19,7 +18,6 @@ def _engine_version() -> str:
             continue
     return digest.hexdigest()[:12]
 
-
 __engine_version__ = _engine_version()
 
 from .profile import DEFAULT_PROFILE, Profile
@@ -29,9 +27,6 @@ from .matching import blend_scores
 from .role_intelligence import wrap_matching
 from .quality import calibrate_result, deduplicate_display_jobs
 
-# Defensive compatibility guard: older deployments/custom profile states may
-# omit one of the seniority buckets. The matcher must never crash because a
-# taxonomy bucket is absent; an absent bucket simply behaves as empty.
 _matching.SENIORITY_PATTERNS = dict(getattr(_matching, "SENIORITY_PATTERNS", {}) or {})
 _matching.SENIORITY_PATTERNS.setdefault("leadership", ["manager", "director", "head of", "head", "lead", "chief", "vp", "vice president"])
 _matching.SENIORITY_PATTERNS.setdefault("senior", ["senior", "sr.", "sr ", "expert", "principal", "specialist senior"])
@@ -39,16 +34,12 @@ _matching.SENIORITY_PATTERNS.setdefault("mid", ["specialist", "coordinator", "of
 _matching.SENIORITY_PATTERNS.setdefault("junior", ["junior", "jr.", "jr ", "entry level", "entry-level", "intern", "trainee", "graduate"])
 
 _matching.ENGLISH_ABOVE_B2 = [
-    "english c1 required", "english c2 required",
-    "c1 english required", "c2 english required",
-    "english required c1", "english required c2",
-    "c1 level english required", "c2 level english required",
-    "english at c1 level required", "english at c2 level required",
-    "english proficiency c1 required", "english proficiency c2 required",
-    "english c1 proficiency required", "english c2 proficiency required",
-    "native english required", "native-level english required",
-    "native level english required", "english mother tongue required",
-    "english c1 mandatory", "english c2 mandatory",
+    "english c1 required", "english c2 required", "c1 english required", "c2 english required",
+    "english required c1", "english required c2", "c1 level english required", "c2 level english required",
+    "english at c1 level required", "english at c2 level required", "english proficiency c1 required",
+    "english proficiency c2 required", "english c1 proficiency required", "english c2 proficiency required",
+    "native english required", "native-level english required", "native level english required",
+    "english mother tongue required", "english c1 mandatory", "english c2 mandatory",
     "c1 english mandatory", "c2 english mandatory",
 ]
 
@@ -58,7 +49,6 @@ _base_hard_filter, _calculate_match_wrapped = wrap_matching(
 
 
 def _safe_job_for_matching(job):
-    """Normalize nullable source fields before entering the strict matcher."""
     if not isinstance(job, dict):
         return job
     safe_job = dict(job)
@@ -68,6 +58,44 @@ def _safe_job_for_matching(job):
     safe_job["location"] = safe_job.get("location") or ""
     safe_job["category"] = safe_job.get("category") or ""
     return safe_job
+
+
+# Romanian country names commonly appear in job titles even when a board
+# incorrectly reports the Romanian recruiter office as the job location.
+_FOREIGN_TITLE_MARKETS = {
+    "olanda": "Netherlands", "netherlands": "Netherlands", "nederland": "Netherlands",
+    "germania": "Germany", "germany": "Germany", "deutschland": "Germany",
+    "franta": "France", "franța": "France", "france": "France",
+    "anglia": "UK", "regatul unit": "UK", "united kingdom": "UK", "marea britanie": "UK", "britain": "UK",
+    "belgia": "Belgium", "belgium": "Belgium", "spania": "Spain", "spain": "Spain",
+    "italia": "Italy", "italy": "Italy", "portugalia": "Portugal", "portugal": "Portugal",
+    "elvetia": "Switzerland", "elvetia": "Switzerland", "switzerland": "Switzerland",
+    "polonia": "Poland", "poland": "Poland", "polska": "Poland", "grecia": "Greece", "greece": "Greece",
+    "cehia": "Czechia", "czechia": "Czechia", "ungaria": "Hungary", "hungary": "Hungary",
+    "suedia": "Sweden", "sweden": "Sweden", "danemarca": "Denmark", "denmark": "Denmark",
+    "norvegia": "Norway", "norway": "Norway", "finlanda": "Finland", "finland": "Finland",
+    "irlanda": "Ireland", "ireland": "Ireland", "austria": "Austria",
+}
+
+_TECHNICAL_TITLE_BLOCKS = (
+    "software engineer", "software developer", "frontend developer", "backend developer",
+    "full stack developer", "full-stack developer", "devops engineer", "cloud engineer",
+    "network engineer", "network administrator", "cyber security", "cybersecurity",
+    "security engineer", "data scientist", "machine learning engineer", "it governance",
+    "it infrastructure", "systems engineer", "system administrator", "database administrator",
+)
+
+
+def _title_foreign_market(job) -> str:
+    title = str(job.get("title") or "").lower()
+    loc = job.get("location") or ""
+    if isinstance(loc, dict):
+        loc = loc.get("display_name", "")
+    text = f"{title} {str(loc).lower()}"
+    for phrase, market in sorted(_FOREIGN_TITLE_MARKETS.items(), key=lambda x: len(x[0]), reverse=True):
+        if re.search(rf"(?<![a-z]){re.escape(phrase)}(?![a-z])", text):
+            return market
+    return ""
 
 
 def _base_calculate_match(job, profile, track=""):
@@ -80,7 +108,15 @@ from . import driving as _driving
 
 
 def hard_filter_job(job, profile, track=""):
-    """Keep Category B fallback roles while preserving all other hard gates."""
+    """Keep valid Category B fallbacks while enforcing Ahmed's hard gates."""
+    market = _title_foreign_market(job)
+    if market:
+        return False, f"🔴 Job is tied to the {market} labour market, not Romania"
+
+    title = str(job.get("title") or "").lower()
+    if any(phrase in title for phrase in _TECHNICAL_TITLE_BLOCKS) and "it" not in str(track or "").lower():
+        return False, "🔴 Technical IT role outside the documented career track"
+
     keep, reason = _base_hard_filter(job, profile, track)
     if keep:
         return True, ""
@@ -90,7 +126,6 @@ def hard_filter_job(job, profile, track=""):
 
 
 def calculate_match(job, profile, track=""):
-    """Normal v4 score plus conservative Category B fallback enrichment."""
     result = _base_calculate_match(job, profile, track)
     return _driving.enrich_match_result(job, result, profile, track)
 
@@ -123,6 +158,11 @@ from .tracker import Application, ApplicationStore, STATUS_FLOW
 def _install_version_marker() -> None:
     try:
         import streamlit as st
+        # Establish Ahmed's intended defaults before app.py creates keyed widgets.
+        st.session_state.setdefault("f_min_score", 35)
+        st.session_state.setdefault("f_location", "Romania")
+        st.session_state.setdefault("f_hide_lang", True)
+        st.session_state.setdefault("f_salary_only", True)
         if getattr(st.title, "_careeros_version_marker", False):
             return
         original_title = st.title
