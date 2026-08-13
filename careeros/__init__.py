@@ -37,9 +37,28 @@ _base_hard_filter, _calculate_match_wrapped = wrap_matching(
 )
 
 
+def _safe_job_for_matching(job):
+    """Normalize nullable source fields before entering the strict matcher.
+
+    Some job feeds occasionally emit ``title: null``. The low-level matcher
+    uses regex/text helpers that expect strings, so sanitize source data here
+    once instead of letting one malformed listing abort the entire search.
+    """
+    if not isinstance(job, dict):
+        return job
+    safe_job = dict(job)
+    safe_job["title"] = str(safe_job.get("title") or "")
+    safe_job["description"] = str(safe_job.get("description") or "")
+    safe_job["company"] = safe_job.get("company") or ""
+    safe_job["location"] = safe_job.get("location") or ""
+    safe_job["category"] = safe_job.get("category") or ""
+    return safe_job
+
+
 def _base_calculate_match(job, profile, track=""):
-    result = _calculate_match_wrapped(job, profile, track)
-    return calibrate_result(result, job=job, profile=profile)
+    safe_job = _safe_job_for_matching(job)
+    result = _calculate_match_wrapped(safe_job, profile, track)
+    return calibrate_result(result, job=safe_job, profile=profile)
 
 
 from . import driving as _driving
