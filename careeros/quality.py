@@ -22,10 +22,11 @@ from .matching import MatchResult, priority_band
 from .text import normalize_text, safe_company_name, text_hash
 
 
-# Real-world hiring outcome deserves the same weight as raw CV similarity.
+# Match remains important, but hiring reality now has equal decision weight.
+# Eligibility is a practical gate rather than the dominant ranking signal.
 REALITY_BLEND = {
-    "match": 0.35,
-    "eligibility": 0.30,
+    "match": 0.40,
+    "eligibility": 0.25,
     "hiring": 0.35,
 }
 
