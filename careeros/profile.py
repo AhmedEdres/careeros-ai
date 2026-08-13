@@ -216,6 +216,34 @@ NEGATIVE_TITLES = [
     "brand manager", "growth manager", "growth director", "content manager",
     "recruiter", "talent acquisition", "hr manager", "hr business partner",
     "human resources manager", "head of hr", "people partner", "people operations manager",
+
+    # Specialized domains that currently create false 75–85% matches from
+    # generic compliance / legal / operations keywords. These are not generic
+    # compliance jobs: they normally require a dedicated domain background that
+    # is not evidenced in Ahmed's profile.
+    "ai compliance officer", "ai compliance specialist", "ai compliance analyst",
+    "ai governance officer", "ai governance specialist", "ai governance analyst",
+    "responsible ai", "model governance", "algorithmic governance",
+    "senior regulatory and sustainability compliance specialist",
+    "regulatory and sustainability compliance", "sustainability compliance",
+    "sustainability specialist", "sustainability manager", "esg specialist",
+    "esg manager", "environmental compliance", "environmental specialist",
+    "environmental manager", "ehs manager", "hse manager",
+    "trademark paralegal", "senior trademark paralegal", "trademark specialist",
+    "trademark counsel", "intellectual property paralegal", "ip paralegal",
+    "intellectual property specialist", "patent paralegal", "patent specialist",
+    "senior regional it locations coordinator", "regional it locations coordinator",
+    "it locations coordinator", "it locations", "it asset coordinator",
+    "it asset manager", "it infrastructure coordinator", "it infrastructure manager",
+    "it service manager", "it service management", "it operations manager",
+    "technical operations manager", "it regional coordinator",
+
+    # Management titles that imply a specialised operational domain rather than
+    # transferable administrative/coordination experience. Plain "Operations
+    # Manager" remains eligible; these variants require domain-specific scope.
+    "regional operations manager", "plant operations manager",
+    "manufacturing operations manager", "warehouse operations manager",
+    "supply chain operations manager", "production operations manager",
 ]
 
 LOCATION_SYNONYMS: Dict[str, List[str]] = {
