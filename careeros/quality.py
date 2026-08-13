@@ -19,7 +19,7 @@ from difflib import SequenceMatcher
 from typing import Dict, Iterable, List, Tuple
 
 from .matching import MatchResult, priority_band
-from .text import canonical_url, normalize_text, safe_company_name, text_hash
+from .text import normalize_text, safe_company_name, text_hash
 
 
 # Real-world hiring outcome deserves the same weight as raw CV similarity.
@@ -68,15 +68,12 @@ def _norm_company(value: object) -> str:
 
 def _norm_location(value: object) -> str:
     text = normalize_text(str(value or ""))
-    # Keep the city/country, discard presentation noise.
     text = re.sub(r"\b(?:remote|hybrid|onsite|on[- ]site)\b", " ", text)
     return re.sub(r"\s+", " ", text).strip(" ,-|/")
 
 
 def _description_fingerprint(job: Dict) -> str:
     text = normalize_text(str(job.get("description", "") or ""))
-    # A compact fingerprint is enough for duplicate comparison; do not store
-    # the description itself in the key.
     tokens = re.findall(r"[a-z0-9]{3,}", text)
     return " ".join(tokens[:180])
 
@@ -91,20 +88,11 @@ def _identity(job: Dict) -> Tuple[str, str, str, str]:
 
 
 def _same_campaign(a: Dict, b: Dict) -> bool:
-    """Conservative cross-board duplicate test.
-
-    Exact title+company+location is always the same campaign. When a board
-    changes the employer label (agency vs end employer), a very high
-    description similarity can still identify the same posting. We require a
-    strong title match as well so legitimate same-title openings are not
-    swallowed.
-    """
+    """Conservative cross-board duplicate test."""
     _, at, ac, ad = _identity(a)
     _, bt, bc, bd = _identity(b)
-    if at != bt:
-        ratio = SequenceMatcher(None, at, bt).ratio()
-        if ratio < 0.94:
-            return False
+    if at != bt and SequenceMatcher(None, at, bt).ratio() < 0.94:
+        return False
     if ac == bc and _norm_location(_job_location(a)) == _norm_location(_job_location(b)):
         return True
     if not ad or not bd:
@@ -149,9 +137,6 @@ def deduplicate_display_jobs(jobs: List[Dict]) -> Tuple[List[Dict], int]:
             removed += 1
             continue
 
-        # Cross-board duplicates may differ in URL and employer label. Only
-        # compare against the small retained set, and only within a nearby
-        # title bucket to keep this cheap for a few hundred jobs.
         match_idx = None
         title = _norm_title(job.get("title"))
         for i, existing in enumerate(kept):
@@ -164,7 +149,6 @@ def deduplicate_display_jobs(jobs: List[Dict]) -> Tuple[List[Dict], int]:
         if match_idx is not None:
             kept[match_idx] = _merge_jobs(kept[match_idx], job)
             removed += 1
-            # Re-index the surviving merged record under its exact identity.
             merged_exact, *_ = _identity(kept[match_idx])
             exact_index[merged_exact] = match_idx
             continue
@@ -179,7 +163,7 @@ def calibrate_result(result: MatchResult) -> MatchResult:
     """Make the displayed overall score reflect hiring reality.
 
     v4 already calculates three useful dimensions. We keep those untouched and
-    only change the *overall* decision score used for ranking.
+    only change the overall decision score used for ranking.
     """
     raw = (
         REALITY_BLEND["match"] * result.match_score
@@ -193,12 +177,13 @@ def calibrate_result(result: MatchResult) -> MatchResult:
             score = min(score, ceiling)
             break
 
-    # Low-confidence ads cannot honestly claim near-perfect fit when the
-    # description contains too little evidence to verify the requirements.
-    if result.confidence == "low":
-        score = min(score, 78)
-    elif result.confidence == "medium":
-        score = min(score, 92)
+    # Confidence should be a ranking/tie-break signal, not a blunt penalty.
+    # A short but obviously relevant local posting may still deserve APPLY.
+    # Only prevent near-perfect claims when the evidence is genuinely thin.
+    if result.confidence == "low" and score > 88:
+        score = 88
+    elif result.confidence == "medium" and score > 95:
+        score = 95
 
     result.score = score
     result.verdict_label, result.verdict = priority_band(score, result.confidence)
