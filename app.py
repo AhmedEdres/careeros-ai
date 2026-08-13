@@ -19,6 +19,7 @@ from careeros.matching import (
     DIMENSION_MAX,
     HIGH_PRIORITY_THRESHOLD,
     MEDIUM_PRIORITY_THRESHOLD,
+    STRONG_APPLY_THRESHOLD,
     priority_band,
 )
 from careeros.profile import CEFR_ORDER, Profile
@@ -219,34 +220,41 @@ def run_ai(kind: str, job: Dict, match, label: str) -> None:
             result = AI.cv_bullets(job, match, PROFILE)
         else:
             result = AI.interview_prep(job, match, PROFILE)
-    st.session_state.ai_cache[key] = result.text if result.ok else f"❌ {result.error}"
+    st.session_state.ai_cache[key] = result
 
 
 # =========================================================
 # SIDEBAR
 # =========================================================
 with st.sidebar:
-    st.title("🎯 CareerOS AI")
-    st.caption(f"v{__version__} · engine {ENGINE_VERSION}")
-
-    st.subheader("🎯 Search strategy")
-    preset = st.radio(
-        "Career track",
-        list(CAREER_PRESETS.keys()),
-        index=0,
-        help="A preset runs several related queries at once and changes how every job is scored. Pick 'Custom keywords' to type your own.",
-    )
+    st.header("🎯 Search strategy")
+    track_labels = {
+        "🔥 Full Career Scan (recommended)": "🔥 Full Career Scan (recommended)",
+        "⚙️ Operations & Back Office": "⚙️ Operations & Back Office",
+        "📞 Customer Support & BPO": "📞 Customer Support & BPO",
+        "🗣️ Arabic-Speaking Roles": "🗣️ Arabic-Speaking Roles",
+        "💰 Finance & Compliance": "💰 Finance & Compliance",
+        "🏭 Logistics & Production": "🏭 Logistics & Production",
+        "📝 Custom keywords": "📝 Custom keywords",
+    }
+    preset_options = list(track_labels)
+    current_track = st.session_state.get("career_track", DEFAULT_TRACK)
+    preset_index = preset_options.index(current_track) if current_track in preset_options else 0
+    preset = st.selectbox("Career track", preset_options, index=preset_index)
+    is_custom = preset == "📝 Custom keywords"
     if preset != st.session_state.get("career_track"):
         st.session_state.career_track = preset
-        # Re-score cached results for the new weight table.
         st.session_state.last_signature = None
-    is_custom = "Custom" in preset
+
     keywords = st.text_input(
-        "Keywords" if is_custom else "Keywords (override the preset)",
-        value="customer support" if is_custom else "",
-        placeholder="e.g. accounts payable",
+        "Keywords (override the preset)",
+        value="" if not is_custom else st.session_state.get("custom_keywords", ""),
+        placeholder="e.g. operations coordinator, back office, customer support",
     )
-    location = st.text_input("📍 Location", value=PROFILE.location)
+    if is_custom:
+        st.session_state.custom_keywords = keywords
+
+    location = st.text_input("📍 Location", PROFILE.location)
     limit_per_source = st.slider("Results per source", 5, 50, 20, 5)
     expand_queries = st.checkbox(
         "🔄 Expand keywords automatically", value=True,
@@ -619,8 +627,7 @@ def render_job_card(index: int, job: Dict) -> None:
                     STORE.remove(url)
                     st.rerun()
             else:
-                if st.button("✅ Mark applied", key=f"apply_{index}_{canonical_url(url)}",
-                             type="secondary", use_container_width=True):
+                if st.button("✅ Mark applied", key=f"apply_{index}_{canonical_url(url)}", type="secondary", use_container_width=True):
                     STORE.add(
                         url=url, title=title, company=company, location=job_location,
                         source=job.get("source", ""), match_score=match.score,
@@ -642,16 +649,21 @@ def render_job_card(index: int, job: Dict) -> None:
 
 
 if results:
-    high = sum(1 for j in results if j["_match"].score >= HIGH_PRIORITY_THRESHOLD)
+    # "Apply / Strong" means every result in the two green bands: 80–100
+    # Apply immediately and 70–79 Strong application. Keep this counter in
+    # lock-step with priority_band(), which already uses STRONG_APPLY_THRESHOLD.
+    apply_or_strong = sum(
+        1 for j in results if j["_match"].score >= STRONG_APPLY_THRESHOLD
+    )
     medium = sum(
         1 for j in results
-        if MEDIUM_PRIORITY_THRESHOLD <= j["_match"].score < HIGH_PRIORITY_THRESHOLD
+        if MEDIUM_PRIORITY_THRESHOLD <= j["_match"].score < STRONG_APPLY_THRESHOLD
     )
     fresh = sum(1 for j in results if isinstance(j.get("age_days"), (int, float)) and j["age_days"] <= 7)
 
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Matches", len(results))
-    m2.metric("🟢 Apply / Strong", high)
+    m2.metric("🟢 Apply / Strong", apply_or_strong)
     m3.metric("🟡 Maybe", medium)
     m4.metric("🆕 Posted this week", fresh)
     m5.metric("📋 Tracked", len(STORE))
@@ -758,44 +770,17 @@ else:
                     f"🌐 {app.source or 'n/a'}" + (f" · 📍 {app.location}" if app.location else "")
                 )
                 if app.url:
-                    st.markdown(f"[Open listing]({app.url})")
+                    st.link_button("Open listing", app.url)
             with status_col:
                 new_status = st.selectbox(
                     "Status", STATUS_FLOW,
                     index=STATUS_FLOW.index(app.status) if app.status in STATUS_FLOW else 0,
-                    key=f"tracker_status_{canonical_url(app.url)}",
-                    label_visibility="collapsed",
+                    key=f"tracker_status_{app.url}",
                 )
                 if new_status != app.status:
                     STORE.update(app.url, status=new_status)
                     st.rerun()
             with remove_col:
-                if st.button("🗑️", key=f"del_{canonical_url(app.url)}", help="Remove"):
+                if st.button("🗑️", key=f"remove_app_{app.url}", help="Remove from tracker"):
                     STORE.remove(app.url)
                     st.rerun()
-
-            notes = st.text_area(
-                "Notes", value=app.notes, key=f"notes_{canonical_url(app.url)}",
-                placeholder="Recruiter name, interview date, follow-up reminder…",
-                height=70, label_visibility="collapsed",
-            )
-            if notes != app.notes:
-                STORE.update(app.url, notes=notes)
-
-
-# =========================================================
-# FOOTER
-# =========================================================
-st.divider()
-with st.expander("🎯 Your profile summary"):
-    left, right = st.columns(2)
-    with left:
-        st.write(f"**Candidate:** {PROFILE.name}")
-        st.write(f"📍 **Base:** {PROFILE.location}, {PROFILE.country}")
-        st.write(f"🎓 **Education:** {PROFILE.education}")
-        st.write(f"💼 **Experience:** {PROFILE.experience_years}+ years")
-    with right:
-        st.write(f"🗣️ **Arabic:** {PROFILE.arabic_level}")
-        st.write(f"🇬🇧 **English:** {PROFILE.english_level}")
-        st.write(f"🇷🇴 **Romanian:** {PROFILE.romanian_level}")
-        st.write(f"💰 **Target:** {PROFILE.target_salary_min:,}–{PROFILE.target_salary_max:,} RON/month")
