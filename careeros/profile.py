@@ -180,6 +180,16 @@ NEGATIVE_TITLES = [
     "software developer", "software engineer", "senior developer",
     "senior engineer", "lead developer", "staff engineer",
     "principal engineer", "machine learning engineer", "data scientist",
+    # Engineering leadership / product / C-level are not Ahmed's track — the
+    # engine must not reward the "Head of" word as leadership for roles that
+    # are actually software/product management he cannot take.
+    "head of engineering", "engineering manager", "engineering lead",
+    "engineering director", "director of engineering", "software engineering manager",
+    "software team lead", "vp of engineering", "vp engineering",
+    "vice president of engineering", "head of software", "software architect",
+    "cto", "chief technology officer", "chief technical officer",
+    "head of product", "product manager", "product owner", "product management",
+    "chief product officer", "vp of product", "vp product",
     "devops", "sre", "site reliability", "full stack developer",
     "fullstack developer", "frontend developer", "front end developer",
     "backend developer", "back end developer", "react developer",

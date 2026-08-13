@@ -49,6 +49,20 @@ class TestHardFilter:
         keep, reason = hard_filter_job(make_job(title="Senior Java Developer"), profile)
         assert not keep and "career track" in reason
 
+    def test_rejects_engineering_leadership_and_product_titles(self, profile):
+        # Regression: "Head of Engineering" was rewarded as leadership because
+        # the ad mentioned Operations/Production. Engineering leadership and
+        # product titles are not Ahmed's track and must be rejected.
+        for title in [
+            "Head of Engineering", "Engineering Manager", "Engineering Director",
+            "CTO", "Chief Technology Officer", "VP of Engineering",
+            "Product Manager", "Product Owner", "Head of Product",
+            "Director of Engineering", "Software Architect",
+        ]:
+            keep, reason = hard_filter_job(make_job(title=title), profile)
+            assert not keep, f"{title!r} should be rejected, got keep={keep}"
+            assert "career track" in reason, f"{title!r} reason={reason!r}"
+
     def test_keeps_relevant_job(self, profile):
         keep, _ = hard_filter_job(make_job(description="Customer support, English required."), profile)
         assert keep
@@ -182,6 +196,20 @@ class TestRemoteGeography:
             "Remote — Anywhere",
             "Join our global team.",
         ) == "remote_eu"
+
+    def test_country_beside_europe_is_not_eu_wide(self):
+        # Regression: "Remote — Europe, Netherlands" was treated as EU-wide
+        # because the word "Europe" won. A country named next to the open
+        # region is that country's labour market, so it must NOT be remote_eu.
+        assert classify_remote_geography("Remote — Europe, Netherlands", "") == "remote_unclear"
+        assert classify_remote_geography("Remote — Europe, UK", "") == "remote_unclear"
+        assert classify_remote_geography("Remote — Europe, Germany hub", "") == "remote_unclear"
+        assert classify_remote_geography("Remote — Europe, United Kingdom", "") == "remote_unclear"
+
+    def test_europe_alone_still_remote_eu(self):
+        # "Remote — Europe" with no country stays acceptable EU-wide eligibility.
+        assert classify_remote_geography("Remote — Europe", "") == "remote_eu"
+        assert classify_remote_geography("Remote — EMEA", "") == "remote_eu"
 
 
 class TestScoring:
@@ -471,7 +499,12 @@ class TestReachableWorkLocation:
         ("Support", "Remote", True),
         ("Support", "Timisoara, Romania", True),
         ("Support", "Bucharest, Romania", True),
-        ("Support", "Remote — Europe, Germany hub", True),
+        # A country named alongside the open region makes it that country's
+        # labour market — "Europe, Germany hub" / "Europe, Netherlands" / etc.
+        ("Support", "Remote — Europe, Germany hub", False),
+        ("Support", "Remote — Europe, Netherlands", False),
+        ("Support", "Remote — Europe, UK", False),
+        ("Support", "Remote — Europe, United Kingdom", False),
         ("Customer service manager (RO)", "Remote — Romania", True),
     ])
     def test_hard_filter_matrix(self, profile, title, location, should_keep):
@@ -500,6 +533,44 @@ class TestReachableWorkLocation:
             title="Customer service manager (UK)",
             location="Remote — UK",
             description="Join our global team. Work from anywhere in the world.",
+        ), profile)
+        assert not keep
+        assert "UK" in reason
+
+
+class TestReportedBadResults:
+    """Regression: the three jobs reported as wrong for Ahmed must disappear.
+
+    (1) "Head of Engineering" — not his track (was rewarded as leadership).
+    (2) "Consultant, Service Development" — Remote — Europe, Netherlands, but
+        a country next to Europe means the Netherlands market, not EU-wide.
+    (3) "Data Support Specialist" — Remote — Europe, UK, likewise the UK
+        market.
+    """
+
+    def test_head_of_engineering_is_rejected(self, profile):
+        keep, reason = hard_filter_job(make_job(
+            title="Head of Engineering",
+            location="Remote — Europe",
+            description="Leading operations and production engineering teams.",
+        ), profile)
+        assert not keep
+        assert "career track" in reason
+
+    def test_consultant_service_development_europe_netherlands_rejected(self, profile):
+        keep, reason = hard_filter_job(make_job(
+            title="Consultant, Service Development",
+            location="Remote — Europe, Netherlands",
+            description="Service development and operations across the region.",
+        ), profile)
+        assert not keep
+        assert "Netherlands" in reason
+
+    def test_data_support_specialist_europe_uk_rejected(self, profile):
+        keep, reason = hard_filter_job(make_job(
+            title="Data Support Specialist",
+            location="Remote — Europe, UK",
+            description="Data support and operations.",
         ), profile)
         assert not keep
         assert "UK" in reason
