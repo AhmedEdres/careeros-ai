@@ -127,8 +127,8 @@ AI = AIClient(SECRETS["CLAUDE_API_KEY"], st.session_state.get("ai_model", MODELS
 # =========================================================
 def current_filters() -> FilterOptions:
     return FilterOptions(
-        min_score=st.session_state.get("f_min_score", 20),
-        location_filter=st.session_state.get("f_location", "All"),
+        min_score=st.session_state.get("f_min_score", 35),
+        location_filter=st.session_state.get("f_location", "Romania"),
         romanian_filter=st.session_state.get("f_romanian", "Any"),
         max_age_days=st.session_state.get("f_max_age", 0),
         only_with_salary=st.session_state.get("f_salary_only", False),
@@ -158,7 +158,7 @@ def filter_signature() -> tuple:
         options.hide_language_blocked,
         options.hide_applied, len(STORE) if options.hide_applied else 0,
         PROFILE.target_salary_min, PROFILE.target_salary_max,
-        PROFILE.romanian_level, PROFILE.location,
+        PROFILE.romanian_level, PROFILE.english_level, PROFILE.location,
         PROFILE.experience_years, PROFILE.open_to_relocation,
         st.session_state.get("career_track", DEFAULT_TRACK),
     )
@@ -273,13 +273,13 @@ with st.sidebar:
     st.divider()
     st.subheader("📌 Filters")
     st.caption(
-        "Filters re-apply instantly — no new API calls. "
-        "Remote roles must be open to Timișoara / Romania or worldwide. "
-        "Country-locked remote (Greece, Poland, UK…) is always hidden."
+        "Ahmed-only filter: Timișoara / Romania (or remote you can do from here). "
+        "English B2 max. Any extra required EU language is removed, not ranked."
     )
-    st.slider("Minimum match %", 0, 100, 20, 5, key="f_min_score", on_change=rescore_results)
+    st.slider("Minimum match %", 0, 100, 35, 5, key="f_min_score", on_change=rescore_results)
     st.selectbox(
         "Location filter", ["All", "Timișoara", "Romania", "Remote", "Europe"],
+        index=2,
         key="f_location", on_change=rescore_results,
     )
     st.radio(
@@ -362,7 +362,10 @@ with st.sidebar:
 # HEADER + SEARCH BAR
 # =========================================================
 st.title("🎯 CareerOS AI")
-st.caption("Multi-source job search, profile-aware ranking, and application tracking for the Romanian & EU market.")
+st.caption(
+    "Ahmed job filter — Timișoara / Romania, English B2, no extra EU languages. "
+    "Not a generic job search."
+)
 
 search_col, refresh_col, clear_col = st.columns([3, 1, 1])
 with search_col:
@@ -648,8 +651,8 @@ if results:
 
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Matches", len(results))
-    m2.metric("🔥 High priority", high)
-    m3.metric("🟡 Worth a look", medium)
+    m2.metric("🟢 Apply / Strong", high)
+    m3.metric("🟡 Maybe", medium)
     m4.metric("🆕 Posted this week", fresh)
     m5.metric("📋 Tracked", len(STORE))
 
@@ -658,7 +661,7 @@ if results:
         st.caption(
             f"Filtered out {filtered_out}: "
             f"{stats.get('rejected_hard', 0)} wrong track / unreachable location · "
-            f"{stats.get('below_score', 0)} below {st.session_state.get('f_min_score', 20)}% · "
+            f"{stats.get('below_score', 0)} below {st.session_state.get('f_min_score', 35)}% · "
             f"{stats.get('filtered_location', 0)} location · "
             f"{stats.get('filtered_romanian', 0)} Romanian · "
             f"{stats.get('filtered_age', 0)} too old · "
@@ -699,7 +702,7 @@ elif st.session_state.has_searched:
     st.warning("No jobs passed your filters.")
     st.markdown(
         "**Try this:**\n"
-        f"- Lower *Minimum match %* (currently {st.session_state.get('f_min_score', 20)}%)\n"
+        f"- Lower *Minimum match %* (currently {st.session_state.get('f_min_score', 35)}%)\n"
         "- Set *Location filter* to **All**\n"
         "- Set *Romanian requirement* to **Any**\n"
         "- Enable more sources in the sidebar\n"
@@ -712,9 +715,10 @@ else:
             """
 Each job is an **Ahmed opportunity filter**, not a generic keyword match.
 
-**Hard rejects (removed, not down-scored):** Dutch/German/French required,
-advanced/native Romanian, unreachable location, specialised senior PM /
-logistics leadership.
+**Hard rejects (removed, not down-scored):** any required language you do not
+speak (French/German/Dutch/Italian… including “fluent English & French”),
+English above B2 (native/C1/C2), advanced Romanian, jobs outside Romania
+you cannot do from Timișoara, US dialer/sales, specialised senior PM.
 
 **Verdict bands:** 🟢 80–100 Apply now · 🟢 70–79 Strong · 🟡 60–69 Consider
 · 🟠 50–59 Low · 🔴 &lt;50 Skip.

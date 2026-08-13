@@ -31,6 +31,7 @@ from .profile import (
     Profile,
     REMOTE_FRIENDLY,
     REMOTE_RESTRICTED,
+    ENGLISH_ABOVE_B2,
     ROMANIAN_FRIENDLY,
     ROMANIAN_REJECT,
     ROMANIAN_RISKY,
@@ -598,6 +599,10 @@ def hard_filter_job(job: Dict, profile: Profile, track: str = "") -> Tuple[bool,
         names = ", ".join(lang.title() for lang in blocking[:3])
         return False, f"🔴 {names} required — language mismatch"
 
+    # 3b. English above B2 (native / C1 / C2). Working "English required" is OK.
+    if profile.english_rank < 5 and contains_any(full, ENGLISH_ABOVE_B2):
+        return False, "🔴 English required above B2 (native/C1/C2)"
+
     # 4. Specialised senior PM / logistics leadership (not transferable).
     if _is_specialized_senior_mismatch(title, full):
         return False, (
@@ -605,15 +610,11 @@ def hard_filter_job(job: Dict, profile: Profile, track: str = "") -> Tuple[bool,
             "not a transferable-skills application"
         )
 
-<<<<<<< HEAD
-    # 5. Clearly different career track (title only).
-=======
     # 5. US outbound sales / dialer — not Ahmed's market or work auth.
     if contains_any(title, ["dialer", "us sales", "usa sales", "sdr", "bdr", "cold call"]):
         return False, "🔴 US sales / dialer — not a reachable or relevant role"
 
     # 6. Clearly different career track (title only).
->>>>>>> 7171ba7 (Catch “fluent English & French” titles and US dialer roles.)
     negatives = list(NEGATIVE_TITLES)
     if resolved == TRACK_LOGISTICS:
         negatives = [t for t in negatives if t not in LOGISTICS_ALLOWED_TITLES]

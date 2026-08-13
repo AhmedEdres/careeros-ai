@@ -14,6 +14,7 @@ __all__ = [
     "ROMANIAN_REJECT",
     "ROMANIAN_RISKY",
     "ROMANIAN_FRIENDLY",
+    "ENGLISH_ABOVE_B2",
     "REMOTE_FRIENDLY",
     "REMOTE_RESTRICTED",
     "SENIORITY_PATTERNS",
@@ -76,6 +77,13 @@ class Profile:
             return CEFR_ORDER.index(self.romanian_level)
         except ValueError:
             return 1  # treat unknown as A1
+
+    @property
+    def english_rank(self) -> int:
+        try:
+            return CEFR_ORDER.index(self.english_level)
+        except ValueError:
+            return 4  # treat unknown as B2
 
 
 DEFAULT_PROFILE = Profile()
@@ -226,6 +234,18 @@ ROMANIAN_RISKY = [
     "good knowledge of romanian", "advanced romanian",
     "cunoasterea limbii romane", "cunostinte de limba romana",
     "romanian and english", "romanian & english",
+]
+
+# English above Ahmed's B2. "English required" / working English is fine.
+# Standalone "fluent English" is left out: EU CS ads use it for B2 operational
+# English. Native / C1 / C2 / mother tongue is not.
+ENGLISH_ABOVE_B2 = [
+    "english c1", "english c2", "c1 english", "c2 english",
+    "english native", "native english", "native speaker of english",
+    "english mother tongue", "mother tongue english",
+    "proficient in english", "full professional proficiency in english",
+    "cambridge c1", "cambridge c2", "cae certificate", "cpe certificate",
+    "ielts 7", "ielts 8", "ielts 9",
 ]
 
 ROMANIAN_FRIENDLY = [

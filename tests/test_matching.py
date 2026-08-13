@@ -69,6 +69,21 @@ class TestHardFilter:
         ), profile)
         assert not keep
 
+    def test_rejects_english_c1(self, profile):
+        keep, reason = hard_filter_job(
+            make_job(description="Customer support. English C1 required."),
+            profile,
+        )
+        assert not keep
+        assert "B2" in reason or "English" in reason
+
+    def test_keeps_english_required_without_level(self, profile):
+        keep, _ = hard_filter_job(
+            make_job(description="Customer support. English required."),
+            profile,
+        )
+        assert keep
+
     def test_rejects_dutch_in_title(self, profile):
         keep, reason = hard_filter_job(
             make_job(title="Service Desk Agent with Dutch", description="Dutch required."),
