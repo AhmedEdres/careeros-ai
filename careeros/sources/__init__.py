@@ -3,9 +3,11 @@
 from .base import SourceResult, build_session, days_since, make_job, parse_date
 from .providers import PROVIDERS, ProviderSpec, fetch_source
 from .romania_boards import fetch_romania_boards
+from .hipo import fetch_hipo
 
-# Add the Romanian board collector without disturbing the existing API
-# providers. It uses the same ProviderSpec/SourceResult contract.
+# Romanian local-board coverage. Keep these adapters behind the same
+# ProviderSpec/SourceResult contract so the search engine and UI remain
+# unchanged while source coverage grows.
 PROVIDERS["romania_boards"] = ProviderSpec(
     "romania_boards",
     "🇷🇴 eJobs + BestJobs + LinkedIn",
@@ -15,6 +17,17 @@ PROVIDERS["romania_boards"] = ProviderSpec(
     supports_location=True,
     client_side_filter=False,
     help_text="Public Romania-board discovery with HTTP-first parsing and optional Selenium fallback.",
+)
+
+PROVIDERS["hipo"] = ProviderSpec(
+    "hipo",
+    "🇷🇴 Hipo — Romania",
+    "Hipo",
+    fetch_hipo,
+    default_on=True,
+    supports_location=True,
+    client_side_filter=False,
+    help_text="Romanian job board with local, remote/hybrid and salary-rich listings.",
 )
 
 __all__ = [
