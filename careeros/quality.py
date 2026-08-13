@@ -10,10 +10,13 @@ from .matching import MatchResult, blend_scores, priority_band
 from .text import normalize_text, safe_company_name, text_hash
 
 
+# The quality layer deliberately gives recruiter reality more influence than
+# raw keyword similarity.  This is the final ranking layer used by the public
+# matcher in careeros/__init__.py.
 REALITY_BLEND = {"match": 0.40, "eligibility": 0.25, "hiring": 0.35}
-# If recruiter-readiness is below 70, the overall score cannot exceed 75;
-# below 50 it cannot exceed 65. This prevents a very high keyword match from
-# masking a weak real-world hiring signal.
+
+# Recruiter-readiness ceilings. A high semantic match must not rescue a role
+# where the documented profile would normally fail the first screening pass.
 HIRING_CEILINGS = ((50, 65), (70, 75), (80, 85))
 
 _COUNTRY_TAG_RE = re.compile(
@@ -50,6 +53,70 @@ _REQUIRED_CREDENTIAL_PATTERNS = (
 _CREDENTIAL_TOKENS = (
     "pmp", "prince2", "acca", "cpa", "cfa", "cia", "cisa", "itil", "six sigma", "iso 27001",
 )
+
+# These are specialist families where generic words such as "coordinator",
+# "specialist", "manager", "operations" or "compliance" can create a very
+# misleading high score.  A candidate with adjacent tools/experience should
+# remain visible, but the role must be marked as a stretch unless the profile
+# contains direct evidence of that specialist family.
+_SPECIALIZED_FAMILIES = {
+    "it_technical": (
+        "it", "information technology", "information systems", "network", "systems administrator",
+        "system administrator", "infrastructure", "service now", "servicenow", "cybersecurity",
+        "cyber security", "cloud", "azure", "aws", "devops", "sre", "database administrator",
+        "technical support", "it support", "desktop support", "it infrastructure",
+    ),
+    "software_data": (
+        "software", "developer", "programmer", "data scientist", "data engineer", "machine learning",
+        "ml engineer", "python", "java", "javascript", "react", "backend", "frontend", "full stack",
+        "sql developer", "analytics engineer",
+    ),
+    "engineering": (
+        "mechanical engineer", "electrical engineer", "industrial engineer", "civil engineer",
+        "process engineer", "manufacturing engineer", "automation engineer", "quality engineer",
+        "design engineer", "engineering specialist", "engineering manager",
+    ),
+    "procurement": (
+        "strategic procurement", "category manager", "category buyer", "buyer", "sourcing manager",
+        "procurement manager", "strategic sourcing", "vendor manager",
+    ),
+    "freight_specialist": (
+        "freight forwarder", "freight forwarding", "customs broker", "customs specialist",
+        "import export specialist", "trade compliance specialist",
+    ),
+}
+
+_SPECIALIZED_TITLE_PATTERNS = {
+    family: re.compile(
+        r"(?:" + "|".join(re.escape(term) for term in terms) + r")",
+        re.IGNORECASE,
+    )
+    for family, terms in _SPECIALIZED_FAMILIES.items()
+}
+
+# Profile evidence is intentionally stronger when it appears in the candidate
+# skills/highlights than when it is merely a generic word in a job description.
+_PROFILE_FAMILY_EVIDENCE = {
+    "it_technical": (
+        "it", "information technology", "information systems", "network", "infrastructure",
+        "servicenow", "service now", "cybersecurity", "cloud", "azure", "aws", "devops",
+        "system administrator", "technical support", "it support",
+    ),
+    "software_data": (
+        "software", "developer", "programming", "data scientist", "data engineer", "machine learning",
+        "python", "java", "javascript", "sql", "power bi", "analytics",
+    ),
+    "engineering": (
+        "engineer", "engineering", "mechanical", "electrical", "industrial engineering",
+        "process engineering", "automation", "manufacturing engineering",
+    ),
+    "procurement": (
+        "procurement", "purchasing", "sourcing", "buyer", "vendor management", "category management",
+    ),
+    "freight_specialist": (
+        "freight", "freight forwarding", "forwarding", "customs", "import export", "trade compliance",
+    ),
+}
 
 
 def _job_location(job: Dict) -> str:
@@ -157,10 +224,16 @@ def _profile_evidence_text(profile) -> str:
         return ""
     skills = " ".join(str(x or "") for x in (getattr(profile, "skills", []) or []))
     highlights = " ".join(str(x or "") for x in (getattr(profile, "highlights", []) or []))
-    return normalize_text(f"{skills} {highlights}")
+    education = str(getattr(profile, "education", "") or "")
+    return normalize_text(f"{skills} {highlights} {education}")
 
 
 def _management_realism(job: Optional[Dict], profile) -> Tuple[int, str]:
+    """Penalise leadership scope that is not evidenced by the profile.
+
+    Ten years of experience is not automatically ten years of people management.
+    This distinction is important for Operations Manager / Regional Manager roles.
+    """
     if not job or profile is None:
         return 0, ""
     title = normalize_text(str(job.get("title", "") or ""))
@@ -190,20 +263,104 @@ def _credential_gap(job: Optional[Dict], profile) -> Tuple[int, str]:
     return 8, "⚠️ Posting has a mandatory certification gate not evidenced in the profile"
 
 
+def _specialized_family(job: Optional[Dict]) -> Optional[str]:
+    if not job:
+        return None
+    title = normalize_text(str(job.get("title", "") or ""))
+    # Title-only by design: a random description mention of "IT systems" must
+    # not turn an otherwise suitable compliance/operations job into an IT role.
+    for family, pattern in _SPECIALIZED_TITLE_PATTERNS.items():
+        if pattern.search(title):
+            return family
+    return None
+
+
+def _specialized_transfer_penalty(job: Optional[Dict], profile) -> Tuple[int, str]:
+    """Detect specialist false positives that generic keyword matching misses.
+
+    Example: "Senior IT Locations Coordinator" can match coordinator + operations
+    + SAP/SQL and look like 80%+, while the actual role may demand IT infrastructure
+    experience. We keep it visible as a stretch rather than treating it as a normal
+    apply.
+    """
+    if not job or profile is None:
+        return 0, ""
+    title = normalize_text(str(job.get("title", "") or ""))
+    family = _specialized_family(job)
+    if not family:
+        return 0, ""
+
+    evidence = _profile_evidence_text(profile)
+    family_evidence = _PROFILE_FAMILY_EVIDENCE.get(family, ())
+    direct = [term for term in family_evidence if term in evidence]
+    if direct:
+        return 0, ""
+
+    senior = bool(re.search(r"\b(?:senior|sr\.?|lead|principal|head|director|manager)\b", title))
+    # Freight/logistics is adjacent to the candidate's documented logistics
+    # exposure, so use a lighter penalty than IT/software/engineering.
+    if family == "freight_specialist":
+        penalty = 6
+        risk = "⚠️ Freight/trade specialism is adjacent, but direct forwarding/customs experience is not documented"
+    elif family == "procurement":
+        penalty = 8
+        risk = "⚠️ Procurement specialism is not directly evidenced in the profile"
+    elif family == "it_technical":
+        penalty = 15 if senior else 12
+        risk = "⚠️ IT/technical specialism is not directly evidenced; coordinator/operations keywords are not enough"
+    elif family == "software_data":
+        penalty = 18 if senior else 15
+        risk = "⚠️ Software/data specialism is not directly evidenced in the profile"
+    else:  # engineering
+        penalty = 16 if senior else 13
+        risk = "⚠️ Engineering specialism is not directly evidenced in the profile"
+    return penalty, risk
+
+
+def _seniority_realism(job: Optional[Dict], profile) -> Tuple[int, str]:
+    """Add a modest penalty for senior roles that exceed documented scope.
+
+    Do not punish every senior title: the candidate has 10+ years and senior
+    specialist roles can be realistic. Penalise only when the posting signals
+    a leadership scope or a senior specialist family without evidence.
+    """
+    if not job or profile is None:
+        return 0, ""
+    title = normalize_text(str(job.get("title", "") or ""))
+    if not re.search(r"\b(?:senior|sr\.?|lead|principal|head|director|manager)\b", title):
+        return 0, ""
+    # Management scope is handled separately; avoid double-penalising the same
+    # signal for a plain manager title.
+    if _MANAGEMENT_TITLE_RE.search(title):
+        return 0, ""
+    family = _specialized_family(job)
+    if family is None:
+        return 0, ""
+    return _specialized_transfer_penalty(job, profile)
+
+
+def _apply_realism_penalty(result: MatchResult, penalty: int, risk: str, label: str) -> None:
+    if not penalty:
+        return
+    result.hiring_score = max(0, result.hiring_score - penalty)
+    if risk:
+        result.hiring_risks.append(risk)
+    result.adjustments.append((label, -penalty))
+
+
 def calibrate_result(result: MatchResult, job: Optional[Dict] = None, profile=None) -> MatchResult:
-    """Apply recruiter-realism guardrails without changing the three visible scores' meaning."""
+    """Apply recruiter-realism guardrails without changing score semantics."""
     management_penalty, management_risk = _management_realism(job, profile)
     credential_penalty, credential_risk = _credential_gap(job, profile)
-    if management_penalty:
-        result.hiring_score = max(0, result.hiring_score - management_penalty)
-        result.hiring_risks.append(management_risk)
-        result.adjustments.append(("Management-scope realism", -management_penalty))
-    if credential_penalty:
-        result.hiring_score = max(0, result.hiring_score - credential_penalty)
-        result.hiring_risks.append(credential_risk)
-        result.adjustments.append(("Mandatory certification gap", -credential_penalty))
+    specialized_penalty, specialized_risk = _specialized_transfer_penalty(job, profile)
 
-    guardrail_applied = bool(management_penalty or credential_penalty)
+    # If the specialist penalty already captures the seniority mismatch, do not
+    # add a second penalty for the same missing evidence.
+    _apply_realism_penalty(result, management_penalty, management_risk, "Management-scope realism")
+    _apply_realism_penalty(result, credential_penalty, credential_risk, "Mandatory certification gap")
+    _apply_realism_penalty(result, specialized_penalty, specialized_risk, "Specialist-transfer realism")
+
+    guardrail_applied = bool(management_penalty or credential_penalty or specialized_penalty)
     raw = (
         REALITY_BLEND["match"] * result.match_score
         + REALITY_BLEND["eligibility"] * result.eligibility_score
@@ -211,14 +368,15 @@ def calibrate_result(result: MatchResult, job: Optional[Dict] = None, profile=No
     )
     score = int(round(max(0, min(100, raw))))
 
-    if result.hiring_score >= 80 and not guardrail_applied:
-        score = blend_scores(result.match_score, result.eligibility_score, result.hiring_score)
-
+    # High-match jobs still need recruiter readiness.  This is intentionally
+    # applied after penalties so the visible score is the realistic score.
     for minimum_hiring, ceiling in HIRING_CEILINGS:
         if result.hiring_score < minimum_hiring:
             score = min(score, ceiling)
             break
 
+    # Never force an 80+ score after a realism guardrail.  Previously this
+    # exception could restore a high score after a meaningful mismatch.
     if (
         not guardrail_applied
         and result.match_score >= 80
@@ -235,7 +393,7 @@ def calibrate_result(result: MatchResult, job: Optional[Dict] = None, profile=No
     result.score = score
     result.verdict_label, result.verdict = priority_band(score, result.confidence)
     result.apply_signals = list(result.reasons[:8])
-    result.apply_risks = list(dict.fromkeys(result.warnings + result.hiring_risks))[:6]
+    result.apply_risks = list(dict.fromkeys(result.warnings + result.hiring_risks))[:8]
     return result
 
 
