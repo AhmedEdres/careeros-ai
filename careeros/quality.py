@@ -11,7 +11,10 @@ from .text import normalize_text, safe_company_name, text_hash
 
 
 REALITY_BLEND = {"match": 0.40, "eligibility": 0.25, "hiring": 0.35}
-HIRING_CEILINGS = ((50, 65), (60, 75), (70, 85))
+# If recruiter-readiness is below 70, the overall score cannot exceed 75;
+# below 50 it cannot exceed 65. This prevents a very high keyword match from
+# masking a weak real-world hiring signal.
+HIRING_CEILINGS = ((50, 65), (70, 75), (80, 85))
 
 _COUNTRY_TAG_RE = re.compile(
     r"\s*[\(\[]\s*(?:[a-z]{2,3}|m/f/d|m/w/d|h/f|remote|hybrid|onsite|on-site)\s*[\)\]]\s*$",
