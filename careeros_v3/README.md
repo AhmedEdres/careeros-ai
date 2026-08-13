@@ -1,45 +1,67 @@
-# CareerOS AI v3 — Safe Integration Build
+# CareerOS AI v3.1 — Safe Integration / Ranking Fix
 
-This is a parallel, non-destructive implementation of the agreed methodology.
-It does **not** overwrite the existing CareerOS files.
+This build is a **non-destructive parallel build**. It does not overwrite the existing CareerOS project.
 
-## Pipeline
+## What was fixed
 
-`Source adapters → normalization → URL/fuzzy deduplication → hard eligibility → career-family inference → dimensional score → career-fit guardrail → ranking`
+The previous ranking engine had a structural weakness: a technically unrelated job could accumulate points from location + English + generic support/operations words. It could therefore look like a 60%+ match even when the career family was wrong.
 
-## Source architecture
+v3.1 changes the order of trust:
 
-The engine is source-independent. Jooble and Remotive adapters are included. Future eJobs / BestJobs / LinkedIn adapters can implement the same `SourceAdapter.search()` contract without changing ranking logic.
+`collect → normalize → deduplicate → hard eligibility → career-family evidence → transferable skills → dimensional score → guardrail → rank`
 
-The architecture follows the useful separation observed in `romania_it_job_scraper`: source-specific collection, a shared job blueprint, description enrichment, and reusable scraping infrastructure. The code here intentionally does not copy that repository's source code.
+### Main corrections
 
-## Safety properties
+1. **Career family is now decisive.** Technical/engineering titles are capped at 24 and cannot appear as actionable recommendations.
+2. **Unknown information scores zero.** Missing experience or salary no longer receives free points.
+3. **Title evidence is stronger than generic description words.** A role title such as `Accountant`, `Compliance Specialist`, or `Operations Coordinator` carries much more weight than a random occurrence of `support` in a description.
+4. **Word-boundary matching was added.** For example, `tax` does not match `taxi`.
+5. **Profile arguments are respected.** Experience and salary scoring now use the supplied profile instead of silently falling back to the global profile.
+6. **Remote country restrictions are checked in both location and description.**
+7. **Actionable tiers are exposed:** `strong`, `good`, `possible`, `weak`, `reject-like`.
+8. **The UI defaults to actionable matches**, while weak/technical results remain available in the audit view.
+9. **Regression coverage increased from 5 to 9 tests.**
 
-- Existing project remains untouched.
-- Missing information does not cause automatic rejection.
-- Explicit incompatible languages, advanced Romanian, country-locked remote roles, and explicit experience minimums above the profile are rejected before scoring.
-- Technical/engineering titles are prevented from receiving a high score merely from generic words such as English, operations, or support.
-- Duplicate listings are merged and source count is retained as a trust signal.
-- Salary is evidence, not a requirement: missing salary lowers evidence but does not reject a job.
-- Freshness and multi-source confirmation affect ranking only.
+## What we learned from the Romanian scraper project
+
+The public `cucubogdan00/romania_it_job_scraper` project has useful architectural ideas: separate source scrapers, a shared parser/data model, strong negative-keyword filtering, work-mode/location parsing, database UPSERT/deduplication, expiry checking, and scheduled scraping. CareerOS should borrow these **architectural principles**, not copy its IT-only filters or source code.
+
+That project is explicitly designed around eJobs, BestJobs and LinkedIn and an IT/technical market, so it is not a complete fit for Ahmed's target roles. Its strongest reusable idea for CareerOS is the **source-adapter + normalization + enrichment pipeline**.
+
+## Current source limitation
+
+This safe build contains Jooble and Remotive adapters. Remotive is remote-focused; it should not be treated as sufficient Romanian-market coverage by itself. Jooble requires `JOOBLE_API_KEY`.
+
+The next source layer should add Romanian-market coverage (eJobs / BestJobs / ANOFM / peViitor or a maintained equivalent) behind the same adapter contract. Do this **after the ranking engine passes the fixture tests**, so we do not mix collection bugs with ranking bugs.
 
 ## Run
 
 ```bash
-pip install streamlit requests
+python -m venv .venv
+# Windows PowerShell:
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 streamlit run app_careeros_v3.py
 ```
 
-Optional secrets/environment:
+Optional:
 
-- `JOOBLE_API_KEY`
-
-Remotive does not require a key.
+```text
+JOOBLE_API_KEY=...
+```
 
 ## Regression test
 
 ```bash
-PYTHONPATH=. pytest -q test_careeros_v3_engine.py
+PYTHONPATH=. pytest -q
 ```
 
-The included tests cover wrong-family technical roles, country-locked remote jobs, blocking languages, deduplication, and a strong Arabic/operations role.
+Expected result for this build:
+
+```text
+9 passed
+```
+
+## Important
+
+Do not replace the existing `main` project with this archive yet. First run this build and compare its top 20 jobs with the current application. Only then should the ranking module be promoted into `main`.

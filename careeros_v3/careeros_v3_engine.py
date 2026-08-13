@@ -133,6 +133,8 @@ class Job:
     reasons: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     dimensions: Dict[str, int] = field(default_factory=dict)
+    match_tier: str = "screening"
+    score_note: str = ""
 
     def as_dict(self) -> Dict[str, Any]:
         return self.__dict__.copy()
@@ -284,21 +286,27 @@ def detect_romanian_hard_requirement(text: str) -> bool:
 def detect_location_hard_reject(job: Job, profile: Dict[str, Any]) -> Optional[str]:
     loc = normalize_text(job.location)
     text = job_text(job)
-    if "remote" in loc or "remote" in text:
-        # Explicit worldwide / Europe / Romania eligibility wins unless a more
-        # specific country-only restriction is also present.
-        if any(x in text for x in ["worldwide", "work from anywhere", "anywhere", "europe", "european union", "romania", "timisoara"]):
-            m = re.search(r"\b(?:remote|work from home).{0,50}\b([a-z ]+)\s+only\b", loc)
-            if not m:
-                return None
-        for needle, pretty in COUNTRY_LOCKS.items():
-            if re.search(rf"\b{re.escape(needle)}\b", loc) and needle not in {"romania"}:
-                return f"Remote role is restricted to {pretty}, not Romania."
+    remote = _contains(text, "remote") or _contains(loc, "remote")
+
+    # Explicit country-only restrictions in the location or description are hard blockers.
+    for needle, pretty in COUNTRY_LOCKS.items():
+        if needle == "romania":
+            continue
+        if remote and (
+            re.search(rf"\b{re.escape(needle)}\b.{0,30}\b(?:only|based|residents?|eligible)\b", loc)
+            or re.search(rf"\b(?:only|based|residents?|eligible)\b.{0,30}\b{re.escape(needle)}\b", loc)
+            or re.search(rf"\b{re.escape(needle)}\s+only\b", text)
+            or re.search(rf"\bremote\b.{0,50}\b{re.escape(needle)}\s+only\b", text)
+        ):
+            return f"Remote role is restricted to {pretty}, not Romania."
+
+    if remote:
         return None
+
     # On-site / hybrid abroad is not actionable without relocation.
     if not profile.get("open_to_relocation", False):
         for needle, pretty in COUNTRY_LOCKS.items():
-            if re.search(rf"\b{re.escape(needle)}\b", loc):
+            if re.search(rf"\b{re.escape(needle)}\b", loc) and needle != "romania":
                 return f"On-site/hybrid location is outside Romania ({pretty})."
     return None
 
@@ -333,32 +341,55 @@ def hard_eligibility(job: Job, profile: Dict[str, Any] = PROFILE) -> Tuple[bool,
     return not reasons, reasons
 
 
+def _phrase_pattern(phrase: str) -> re.Pattern:
+    """Compile a phrase safely so 'tax' does not match 'taxi'."""
+    escaped = re.escape(normalize_text(phrase))
+    return re.compile(rf"(?<![a-z0-9]){escaped}(?![a-z0-9])", re.I)
+
+
+def _contains(text: str, phrase: str) -> bool:
+    return bool(_phrase_pattern(phrase).search(text))
+
+
+def _hits(text: str, phrases: Sequence[str]) -> List[str]:
+    return [p for p in phrases if _contains(text, p)]
+
+
 def infer_family(job: Job) -> Tuple[str, int, List[str], List[str]]:
     text = job_text(job)
     title = normalize_text(job.title)
     candidates = []
     for family, cfg in CAREER_FAMILIES.items():
-        strong_hits = [x for x in cfg["strong"] if x in title or x in text]
-        support_hits = [x for x in cfg["support"] if x in text]
-        excludes = [x for x in cfg["exclude"] if x in title]
-        score = min(100, len(strong_hits) * 18 + len(support_hits) * 5)
-        if strong_hits and any(x in title for x in cfg["strong"]):
-            score += 12
+        title_strong = _hits(title, cfg["strong"])
+        desc_strong = [x for x in _hits(text, cfg["strong"]) if x not in title_strong]
+        support_hits = _hits(text, cfg["support"])
+        excludes = _hits(title, cfg["exclude"])
+        # Title evidence is deliberately much stronger than generic description words.
+        score = len(title_strong) * 32 + len(desc_strong) * 10 + len(support_hits) * 3
         if excludes:
-            score -= 50
-        candidates.append((score, family, strong_hits, support_hits, excludes))
-    candidates.sort(reverse=True)
+            score -= 80 * len(excludes)
+        candidates.append((max(0, min(100, score)), family, title_strong, desc_strong, support_hits, excludes))
+
+    # Technical title guardrail happens before generic-family scoring.
+    technical_hits = _hits(title, TECHNICAL_FAMILIES)
+    if technical_hits:
+        return (
+            "Technical / Engineering", 0, [],
+            ["Technical/engineering title detected: " + ", ".join(technical_hits[:3]) + "."],
+        )
+
+    candidates.sort(key=lambda x: (x[0], len(x[2]), len(x[3])), reverse=True)
     best = candidates[0]
-    # A title-only technical role is a hard family mismatch for this profile.
-    technical = [x for x in TECHNICAL_FAMILIES if x in title]
-    if technical:
-        return "Technical / Engineering", 0, [], ["Role is primarily technical/engineering and does not align with the target career families."]
     if best[0] <= 0:
         return "Other", 0, [], ["No strong career-family evidence found."]
+
     reasons = [f"Career family: {best[1]}"]
-    if best[2]:
-        reasons.append("Direct role signals: " + ", ".join(best[2][:4]))
-    return best[1], min(100, best[0]), reasons, []
+    direct = best[2] + best[3]
+    if direct:
+        reasons.append("Direct role signals: " + ", ".join(direct[:5]))
+    if best[5]:
+        reasons.append("Negative role signals: " + ", ".join(best[5][:3]))
+    return best[1], int(best[0]), reasons, []
 
 
 def parse_salary(job: Job) -> Optional[float]:
@@ -371,7 +402,6 @@ def parse_salary(job: Job) -> Optional[float]:
     nums = []
     for raw in re.findall(r"\d[\d., ]*", text):
         s = raw.replace(" ", "")
-        # Romanian 5.000 / 7,000 and decimal variants.
         if s.count(".") == 1 and s.count(",") == 0 and len(s.split(".")[-1]) == 3:
             s = s.replace(".", "")
         elif s.count(",") == 1 and len(s.split(",")[-1]) == 3:
@@ -384,9 +414,6 @@ def parse_salary(job: Job) -> Optional[float]:
             pass
     if not nums:
         return None
-    # Only treat RON/lei salaries as directly comparable. EUR is converted with
-    # a conservative fixed approximation for ranking; this is intentionally not
-    # a financial quote.
     if any(x in text for x in ["eur", "€"]):
         return sum(nums) / len(nums) * 5.0
     if any(x in text for x in ["usd", "$", "dollar"]):
@@ -407,19 +434,18 @@ def _dim_location(job: Job) -> int:
     return 0
 
 
-def _dim_skills(job: Job, family: str) -> Tuple[int, List[str]]:
+def _dim_skills(job: Job, family: str, profile: Dict[str, Any]) -> Tuple[int, List[str]]:
     text = job_text(job)
-    direct = []
-    for skill in PROFILE["skills"]:
-        if skill in text:
-            direct.append(skill)
+    direct = _hits(text, list(profile.get("skills", set())))
     family_cfg = CAREER_FAMILIES.get(family, {})
-    family_hits = [x for x in family_cfg.get("strong", []) if x in text]
+    family_hits = _hits(text, family_cfg.get("strong", []))
     score = min(25, len(set(direct)) * 2 + len(set(family_hits)) * 3)
-    # Direct, role-specific evidence gets more weight than generic tools.
-    if any(x in text for x in ["tax", "compliance", "accounting", "audit", "operations", "customer support", "logistics"]):
-        score += 4
-    return min(25, score), direct[:6]
+    # Avoid a generic-word bonus for technical/unknown roles.
+    if family not in {"Technical / Engineering", "Other"} and any(
+        _contains(text, x) for x in ["tax", "compliance", "accounting", "audit", "operations", "customer support", "logistics"]
+    ):
+        score = min(25, score + 4)
+    return score, direct[:8]
 
 
 def _dim_language(job: Job) -> Tuple[int, int, List[str]]:
@@ -427,62 +453,57 @@ def _dim_language(job: Job) -> Tuple[int, int, List[str]]:
     arabic = 0
     english = 0
     reasons = []
-    if re.search(r"\barabic\b|\barabe\b|\barabic speaker|mena|middle east|gcc", text):
+    if _contains(text, "arabic") or _contains(text, "arabe") or _contains(text, "mena") or _contains(text, "middle east") or _contains(text, "gcc"):
         arabic = 15
         reasons.append("Arabic is directly relevant")
-    elif "arabic" in text:
-        arabic = 8
-        reasons.append("Arabic is mentioned")
-    if re.search(r"\benglish\b|\benglish speaking\b|\bengleza\b", text):
+    if _contains(text, "english") or _contains(text, "engleza"):
         english = 10
         reasons.append("English is relevant")
     return arabic, english, reasons
 
 
-def _dim_experience(job: Job) -> Tuple[int, str]:
+def _dim_experience(job: Job, profile: Dict[str, Any]) -> Tuple[int, str]:
     title = normalize_text(job.title)
     text = job_text(job)
     required = None
     m = re.search(r"\b(?:minimum|min\.?|at least)\s*(\d+)\+?\s*(?:years?|yrs?)\b", text)
     if m:
         required = int(m.group(1))
-    seniority = 0
-    if any(x in title for x in ["senior", "lead", "manager", "specialist"]):
-        seniority = 1
-    years = PROFILE["experience_years"]
+    years = int(profile.get("experience_years", 0))
     if required is not None:
         if required <= years:
             return 10, "Experience requirement is within profile range"
         return 0, "Experience requirement exceeds profile"
-    if seniority and years >= 5:
-        return 9, "Seniority is plausible for 10+ years"
-    return 7, "Experience level is not explicitly incompatible"
+    if any(x in title for x in ["senior", "lead", "manager", "specialist"]):
+        return (9, "Seniority is plausible for the profile") if years >= 5 else (0, "Seniority may exceed profile")
+    # Unknown is zero evidence — never award free points.
+    return 0, "Experience requirement is not stated"
 
 
-def _dim_salary(job: Job) -> Tuple[int, Optional[float], str]:
+def _dim_salary(job: Job, profile: Dict[str, Any]) -> Tuple[int, Optional[float], str]:
     salary = parse_salary(job)
     if salary is None:
         return 0, None, "Salary not published"
-    target = PROFILE["target_salary_min"]
+    target = float(profile.get("target_salary_min", 0))
     if salary >= target:
-        return 10, salary, f"Published salary is around/above {target:,} RON target"
+        return 10, salary, f"Published salary is around/above {target:,.0f} RON target"
     if salary >= target * 0.8:
         return 6, salary, "Published salary is below target but reasonably close"
     return 2, salary, "Published salary is materially below target"
 
 
-def _dim_education(job: Job) -> Tuple[int, str]:
+def _dim_education(job: Job, profile: Dict[str, Any]) -> Tuple[int, str]:
     text = job_text(job)
-    if any(x in text for x in ["law", "legal", "compliance", "regulatory", "master", "degree"]):
+    if any(_contains(text, x) for x in ["law", "legal", "compliance", "regulatory", "master", "degree"]):
         return 5, "Law/degree background is relevant"
     return 0, "No direct education signal"
 
 
 def _dim_relevance(job: Job, family: str) -> Tuple[int, str]:
     text = job_text(job)
-    hits = sum(1 for x in ["bpo", "shared services", "mena", "operations", "compliance", "back office", "customer support"] if x in text)
-    if family == "Technical / Engineering":
-        return 0, "Technical role"
+    hits = sum(1 for x in ["bpo", "shared services", "mena", "operations", "compliance", "back office", "customer support"] if _contains(text, x))
+    if family in {"Technical / Engineering", "Other"}:
+        return 0, "No relevant career-family context"
     return min(5, hits), "Relevant shared-services/operations context" if hits else "Limited contextual evidence"
 
 
@@ -494,32 +515,25 @@ def score_job(job: Job, profile: Dict[str, Any] = PROFILE) -> Job:
     job.warnings = list(family_warnings)
 
     loc = _dim_location(job)
-    skills, direct_skills = _dim_skills(job, family)
+    skills, direct_skills = _dim_skills(job, family, profile)
     arabic, english, lang_reasons = _dim_language(job)
-    experience, exp_reason = _dim_experience(job)
-    salary, salary_value, salary_reason = _dim_salary(job)
-    education, edu_reason = _dim_education(job)
+    experience, exp_reason = _dim_experience(job, profile)
+    salary, salary_value, salary_reason = _dim_salary(job, profile)
+    education, edu_reason = _dim_education(job, profile)
     relevance, relevance_reason = _dim_relevance(job, family)
 
     job.dimensions = {
-        "location": loc,
-        "skills": skills,
-        "arabic": arabic,
-        "english": english,
-        "experience": experience,
-        "salary": salary,
-        "education": education,
-        "relevance": relevance,
+        "location": loc, "skills": skills, "arabic": arabic, "english": english,
+        "experience": experience, "salary": salary, "education": education, "relevance": relevance,
     }
     base = sum(job.dimensions.values())
 
     if direct_skills:
-        job.reasons.append("Transferable evidence: " + ", ".join(direct_skills[:5]))
+        job.reasons.append("Transferable evidence: " + ", ".join(direct_skills[:6]))
     job.reasons.extend(lang_reasons)
     if loc:
         job.reasons.append("Location is actionable for Timișoara/Romania")
-    if experience:
-        job.reasons.append(exp_reason)
+    job.reasons.append(exp_reason)
     if salary_value is not None:
         job.reasons.append(salary_reason)
     else:
@@ -529,47 +543,49 @@ def score_job(job: Job, profile: Dict[str, Any] = PROFILE) -> Job:
     if relevance:
         job.reasons.append(relevance_reason)
 
-    # Career-family guardrail: family fit is a multiplier, not a replacement for
-    # the existing dimensional score. This preserves the old scoring model while
-    # preventing generic English/operations points from producing false positives.
-    if family_fit >= 75:
-        multiplier = 1.00
-    elif family_fit >= 55:
-        multiplier = 0.92
-    elif family_fit >= 35:
-        multiplier = 0.78
-    elif family_fit >= 15:
-        multiplier = 0.58
+    # Guardrail: the score must reflect career fit, not generic English/location points.
+    if family == "Technical / Engineering":
+        score = min(base, 24)
+        job.match_tier = "reject-like"
+        job.score_note = "Technically unrelated role — retained only for audit, never a top recommendation."
+    elif family == "Other" or family_fit < 20:
+        score = min(base, 30)
+        job.match_tier = "weak"
+        job.score_note = "Insufficient evidence that this role belongs to a target career family."
+    elif family_fit < 40:
+        score = min(round(base * 0.70), 44)
+        job.match_tier = "weak"
+        job.score_note = "Some transferable evidence, but career-family fit is weak."
+    elif family_fit < 60:
+        score = min(round(base * 0.85), 59)
+        job.match_tier = "possible"
+        job.score_note = "Plausible role; verify requirements before applying."
     else:
-        multiplier = 0.25
+        score = base
+        job.match_tier = "strong" if family_fit >= 75 else "good"
+        job.score_note = "Strong direct evidence for a target career family."
 
-    score = round(base * multiplier)
-    # Direct Arabic roles get a modest tie-breaker, never enough to rescue a bad
-    # family fit by themselves.
-    if arabic == 15 and family_fit >= 35:
-        score = min(100, score + 3)
-    # Freshness boost is capped and only affects ranking, not eligibility.
+    if arabic == 15 and family_fit >= 40:
+        score = min(100, score + 2)
     if job.age_days is not None:
         if job.age_days <= 3:
-            score += 3
+            score = min(100, score + 3)
         elif job.age_days <= 7:
-            score += 2
+            score = min(100, score + 2)
         elif job.age_days > 45:
-            score -= 3
-    # Multi-source confirmation is a useful trust signal.
+            score = max(0, score - 3)
     if job.duplicate_count >= 2:
-        score += 2
+        score = min(100, score + 2)
         job.reasons.append(f"Seen on {job.duplicate_count} job sources")
-    job.score = max(0, min(100, score))
 
+    job.score = max(0, min(100, round(score)))
     if family_fit >= 65 and base >= 45:
         job.confidence = "high"
-    elif family_fit >= 35 and base >= 30:
+    elif family_fit >= 35 and base >= 25:
         job.confidence = "medium"
     else:
         job.confidence = "low"
     return job
-
 
 def rank_jobs(raw_jobs: Sequence[Dict[str, Any] | Job], profile: Dict[str, Any] = PROFILE) -> Dict[str, Any]:
     jobs, merged = deduplicate_jobs(raw_jobs)
@@ -594,7 +610,7 @@ def rank_jobs(raw_jobs: Sequence[Dict[str, Any] | Job], profile: Dict[str, Any] 
             continue
         eligible.append(score_job(job, profile))
 
-    eligible.sort(key=lambda j: (j.score, j.family_fit, -(j.age_days if j.age_days is not None else 9999)), reverse=True)
+    eligible.sort(key=lambda j: (j.score, j.family_fit, j.confidence == "high", -(j.age_days if j.age_days is not None else 9999)), reverse=True)
     return {"jobs": eligible, "rejected": rejected, "stats": stats}
 
 

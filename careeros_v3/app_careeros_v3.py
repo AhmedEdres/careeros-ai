@@ -52,9 +52,10 @@ with st.sidebar:
 
     st.divider()
     st.header("📌 Ranking filters")
-    min_score = st.slider("Minimum match %", 0, 100, 30, 5)
+    min_score = st.slider("Minimum match %", 0, 100, 45, 5)
     only_salary = st.checkbox("💰 Published salary only", False)
-    hide_low_conf = st.checkbox("Hide low-confidence matches", False)
+    hide_low_conf = st.checkbox("Hide low-confidence matches", True)
+    recommended_only = st.checkbox("🎯 Show actionable matches only", True)
 
     st.divider()
     st.header("👤 Candidate")
@@ -135,6 +136,8 @@ with col2:
 if st.session_state.get("searched"):
     stats = st.session_state.stats
     jobs = [j for j in st.session_state.jobs if j.score >= min_score]
+    if recommended_only:
+        jobs = [j for j in jobs if j.match_tier in {"strong", "good", "possible"}]
     if only_salary:
         jobs = [j for j in jobs if j.salary_min is not None or j.salary_max is not None or j.salary_text]
     if hide_low_conf:
@@ -153,6 +156,9 @@ if st.session_state.get("searched"):
     for err in getattr(st.session_state, "search_errors", []):
         st.warning(err)
 
+    if not use_jooble:
+        st.info("Jooble is disabled or has no API key. For Romania coverage, enable a Romanian job source/API; Remotive alone is remote-focused.")
+
     st.divider()
     st.subheader("🎯 Recommended jobs")
 
@@ -168,8 +174,9 @@ if st.session_state.get("searched"):
                 st.caption(f"**{job.company}** · 📍 {job.location or 'Not specified'} · 🌐 {job.source}")
             with h2:
                 st.metric("CareerOS match", f"{job.score}%")
-                st.caption(f"{job.confidence} confidence")
+                st.caption(f"{job.match_tier.upper()} · {job.confidence} confidence")
             st.progress(job.score / 100)
+            st.info(job.score_note) if job.match_tier in {"possible", "weak"} else None
 
             meta = [f"🎯 {job.career_family}", f"Family fit {job.family_fit}%"]
             if job.salary_text:
