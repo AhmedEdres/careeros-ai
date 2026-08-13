@@ -1,16 +1,4 @@
-"""Post-processing guardrails for production job-search quality.
-
-This module deliberately sits *after* the proven v4 matcher rather than
-rewriting it. It fixes two production-quality issues seen in real results:
-
-1. ranking was too match-heavy (a 98% CV match could still be only a 73%
-   hiring reality fit), and
-2. different job boards can surface the same opening with slightly different
-   URLs, titles or employer labels.
-
-The goal is not to make scores lower; it is to make them more honest and the
-result list more useful to a person who actually has to apply.
-"""
+"""Post-processing guardrails for production job-search quality."""
 
 from __future__ import annotations
 
@@ -18,34 +6,23 @@ import re
 from difflib import SequenceMatcher
 from typing import Dict, Iterable, List, Tuple
 
-from .matching import MatchResult, priority_band
+from .matching import MatchResult, blend_scores, priority_band
 from .text import normalize_text, safe_company_name, text_hash
 
 
-# Match remains important, but hiring reality now has equal decision weight.
-# Eligibility is a practical gate rather than the dominant ranking signal.
-REALITY_BLEND = {
-    "match": 0.40,
-    "eligibility": 0.25,
-    "hiring": 0.35,
-}
+# Match remains important, while hiring reality gets equal decision weight.
+REALITY_BLEND = {"match": 0.40, "eligibility": 0.25, "hiring": 0.35}
 
 # A recruiter-readiness gate prevents a weak hiring signal from being hidden by
-# a large keyword match. These are ceilings, not penalties: a strong hiring
-# signal is never reduced.
-HIRING_CEILINGS = (
-    (50, 65),
-    (60, 75),
-    (70, 85),
-)
+# a large keyword match. These are ceilings, not penalties.
+HIRING_CEILINGS = ((50, 65), (60, 75), (70, 85))
 
 _COUNTRY_TAG_RE = re.compile(
     r"\s*[\(\[]\s*(?:[a-z]{2,3}|m/f/d|m/w/d|h/f|remote|hybrid|onsite|on-site)\s*[\)\]]\s*$",
     re.IGNORECASE,
 )
 _ROLE_NOISE_RE = re.compile(
-    r"\b(?:m/f/d|m/w/d|h/f|full[- ]?time|part[- ]?time|urgent|new)\b",
-    re.IGNORECASE,
+    r"\b(?:m/f/d|m/w/d|h/f|full[- ]?time|part[- ]?time|urgent|new)\b", re.IGNORECASE
 )
 
 
@@ -103,11 +80,10 @@ def _same_campaign(a: Dict, b: Dict) -> bool:
 
 def _merge_jobs(primary: Dict, secondary: Dict) -> Dict:
     """Keep the richer record and preserve useful provenance."""
-    primary_desc = str(primary.get("description", "") or "")
-    secondary_desc = str(secondary.get("description", "") or "")
-    richer, poorer = (primary, secondary) if len(primary_desc) >= len(secondary_desc) else (secondary, primary)
+    p_desc = str(primary.get("description", "") or "")
+    s_desc = str(secondary.get("description", "") or "")
+    richer, poorer = (primary, secondary) if len(p_desc) >= len(s_desc) else (secondary, primary)
     merged = dict(richer)
-
     for field in ("salary_text", "salary_currency", "salary_min", "salary_max", "posted_at", "age_days"):
         if merged.get(field) in (None, "", 0) and poorer.get(field) not in (None, "", 0):
             merged[field] = poorer.get(field)
@@ -119,7 +95,6 @@ def _merge_jobs(primary: Dict, secondary: Dict) -> Dict:
             sources.update(part.strip() for part in source.split(" + ") if part.strip())
     if sources:
         merged["source"] = " + ".join(sorted(sources))
-
     merged["duplicate_count"] = int(primary.get("duplicate_count", 1)) + int(secondary.get("duplicate_count", 1))
     return merged
 
@@ -146,7 +121,6 @@ def deduplicate_display_jobs(jobs: List[Dict]) -> Tuple[List[Dict], int]:
             if _same_campaign(existing, job):
                 match_idx = i
                 break
-
         if match_idx is not None:
             kept[match_idx] = _merge_jobs(kept[match_idx], job)
             removed += 1
@@ -156,16 +130,12 @@ def deduplicate_display_jobs(jobs: List[Dict]) -> Tuple[List[Dict], int]:
 
         exact_index[exact] = len(kept)
         kept.append(job)
-
     return kept, removed
 
 
 def calibrate_result(result: MatchResult) -> MatchResult:
-    """Make the displayed overall score reflect hiring reality.
-
-    v4 already calculates three useful dimensions. We keep those untouched and
-    only change the overall decision score used for ranking.
-    """
+    """Make the displayed overall score reflect hiring reality without
+    destroying the existing meaning of the three underlying scores."""
     raw = (
         REALITY_BLEND["match"] * result.match_score
         + REALITY_BLEND["eligibility"] * result.eligibility_score
@@ -173,14 +143,23 @@ def calibrate_result(result: MatchResult) -> MatchResult:
     )
     score = int(round(max(0, min(100, raw))))
 
+    # For already-strong recruiter-readiness, preserve v4's proven high-fit
+    # behavior. The new blend mainly corrects the borderline cases where a
+    # huge keyword match used to overwhelm a weak hiring signal.
+    if result.hiring_score >= 80:
+        score = blend_scores(result.match_score, result.eligibility_score, result.hiring_score)
+
     for minimum_hiring, ceiling in HIRING_CEILINGS:
         if result.hiring_score < minimum_hiring:
             score = min(score, ceiling)
             break
 
-    # Confidence should be a ranking/tie-break signal, not a blunt penalty.
-    # A short but obviously relevant local posting may still deserve APPLY.
-    # Only prevent near-perfect claims when the evidence is genuinely thin.
+    # A clearly strong local fit should remain high priority even when the ad
+    # is terse; confidence should not become an artificial penalty.
+    if result.match_score >= 80 and result.eligibility_score >= 80 and result.hiring_score >= 65:
+        score = max(score, 80)
+
+    # Confidence only prevents near-perfect claims when evidence is thin.
     if result.confidence == "low" and score > 88:
         score = 88
     elif result.confidence == "medium" and score > 95:
@@ -194,7 +173,6 @@ def calibrate_result(result: MatchResult) -> MatchResult:
 
 
 def calibrate_jobs(jobs: Iterable[Dict]) -> None:
-    """Calibrate scores in-place after the matcher has populated ``_match``."""
     for job in jobs:
         match = job.get("_match")
         if isinstance(match, MatchResult):
