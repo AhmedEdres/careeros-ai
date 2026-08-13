@@ -1,4 +1,4 @@
-name: CareerOS tests
+name: CareerOS branch regression tests
 
 on:
   push:
