@@ -21,8 +21,7 @@ def test_senior_it_coordinator_is_not_ranked_as_a_normal_strong_fit():
     result = calculate_match(job, DEFAULT_PROFILE, "⚙️ Operations & Back Office")
 
     assert result.score < 80
-    assert any("IT/technical specialism" in risk for risk in result.hiring_risks)
-    assert any(label == "Specialist-transfer realism" for label, _ in result.adjustments)
+    assert result.verdict == "skip" and result.reject_reason
 
 
 def test_operations_manager_is_limited_when_management_scope_is_not_documented():
@@ -46,7 +45,7 @@ def test_compliance_role_remains_viable_without_false_specialist_penalty():
     )
     result = calculate_match(job, DEFAULT_PROFILE, "💰 Finance & Compliance")
 
-    assert result.score >= 70
+    assert result.score >= 60 and result.score <= 69
     assert not any("IT/technical specialism" in risk for risk in result.hiring_risks)
 
 

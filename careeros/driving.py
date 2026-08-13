@@ -2,6 +2,21 @@
 from __future__ import annotations
 from typing import Dict
 from .text import contains_any, normalize_text
+import re
+
+_HEAVY_TITLE = re.compile(r"\b(?:c\s*[＋+&/]\s*e|c\s*e\b|categoria\s+c(?:e|\+e)?|category\s+c(?:e|\+e)?|cat\.?\s*c(?:e|\+e)?|categoria\s+d|category\s+d|cat\.?\s*d|d\s*[＋+&/]\s*e|permis\s+(?:c|ce|c\+e|d|de)\b|sofer\s+camion|șofer\s+camion|truck\s+driver|tir(?:\s+driver)?|sofer\s+autobuz|șofer\s+autobuz|bus\s+driver|coach\s+driver|camion|autobuz|autocar)\b", re.IGNORECASE)
+_HEAVY_LICENCE_PHRASE = re.compile(r"(?:permis|licence|license|categoria|category|cat\.?)\s*(?:c\s*[＋+&/]\s*e|c\s*e|ce|c\b|d\b|d\s*[＋+&/]\s*e)", re.IGNORECASE)
+
+def is_heavy_role(job: Dict) -> bool:
+    title, full = _text(job)
+    if _HEAVY_TITLE.search(title):
+        return True
+    if _HEAVY_LICENCE_PHRASE.search(full):
+        if contains_any(full, CATEGORY_B_PATTERNS) and not re.search(r"(?:categoria|category|cat\.?|permis)\s*(?:c|ce|c\+e|d)\b", full):
+            return False
+        return True
+    return False
+
 
 DRIVER_TITLE_PATTERNS = ("sofer", "șofer", "driver", "courier", "curier", "livrator", "delivery driver", "distributie", "distribuție", "van driver", "route driver", "transport driver", "driver categoria b", "sofer cat b", "sofer categoria b", "permis categoria b")
 HYBRID_PATTERNS = ("field agent", "agent teren", "merchandiser", "field service", "field coordinator", "logistics assistant", "logistics coordinator", "transport coordinator", "dispecer transport", "fleet coordinator", "distribution coordinator", "delivery coordinator")
@@ -44,12 +59,17 @@ def driver_path(job: Dict) -> str:
 
 
 def should_keep_despite_negative_title(job: Dict, profile, track: str = "") -> bool:
-    return bool(getattr(profile, "has_category_b_license", True)) and driver_path(job) in {"driver_fallback", "hybrid"}
+    return bool(getattr(profile, "has_category_b_license", True)) and driver_path(job) in {"driver_fallback", "hybrid"} and not is_heavy_role(job) and (contains_any(_text(job)[1], CATEGORY_B_PATTERNS) or contains_any(_text(job)[0], ("courier", "curier", "livrator", "van driver", "delivery driver", "route driver")))
 
 
 def enrich_match_result(job: Dict, result, profile, track: str = ""):
     path = driver_path(job)
     if path == "none":
+        return result
+    if is_heavy_role(job) or getattr(result, "reject_reason", "") or getattr(result, "verdict", "") == "skip":
+        return result
+    title = normalize_text(str(job.get("title", "") or ""))
+    if contains_any(title, ("olanda", "germania", "netherlands", "germany", "franta", "france", "italia", "italy", "belgia", "belgium", "spania", "spain", "polonia", "poland", "grecia", "greece")):
         return result
     if not getattr(profile, "has_category_b_license", True):
         result.warnings.append("Category B is not enabled in the profile")
@@ -75,14 +95,10 @@ def enrich_match_result(job: Dict, result, profile, track: str = ""):
 
 
 def configure_search_presets(presets: Dict[str, list]) -> None:
-    """Inject one driver query into the first six queries actually searched."""
-    for key in ("🔥 Full Career Scan (recommended)", "🏭 Logistics & Production"):
-        if key not in presets:
-            continue
-        existing = [q for q in presets[key] if q not in {"sofer categoria B", "driver category B", "livrator distributie"}]
-        # Preserve the most important professional queries, then add the
-        # fallback query inside MAX_QUERIES so it is not silently truncated.
-        if len(existing) >= 6:
-            existing = existing[:5]
-        existing.append("sofer categoria B")
-        presets[key] = existing
+    """Preserve the six professional Full Scan queries; B-driver is logistics-only."""
+    key = "🏭 Logistics & Production"
+    if key in presets and "sofer categoria B" not in presets[key]:
+        if len(presets[key]) < 7:
+            presets[key].append("sofer categoria B")
+        else:
+            presets[key][-1] = "sofer categoria B"

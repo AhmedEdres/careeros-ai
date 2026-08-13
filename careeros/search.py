@@ -438,6 +438,10 @@ def score_and_filter(
         match = calculate_match(job, profile, track)
         job["_match"] = match
 
+        if getattr(match, "verdict", "") == "skip" or getattr(match, "reject_reason", ""):
+            stats["rejected_hard"] += 1
+            continue
+
         if match.score < options.min_score:
             stats["below_score"] += 1
             continue

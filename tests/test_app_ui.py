@@ -103,7 +103,7 @@ def test_filter_change_rescoring_keeps_results():
     assert at.session_state["raw_jobs"]
     at.session_state["f_min_score"] = 0
     at.run()
-    assert len(at.session_state["results"]) == 2
+    assert len(at.session_state["results"]) == 1
 
 
 def test_mark_applied_persists_in_store():

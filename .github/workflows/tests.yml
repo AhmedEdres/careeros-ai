@@ -1,8 +1,10 @@
-name: CareerOS tests
+name: CareerOS branch regression tests
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - fix/careeros-4.3.5-filters
   pull_request:
     branches: [main]
 

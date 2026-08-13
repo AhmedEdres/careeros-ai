@@ -21,6 +21,7 @@ def _engine_version() -> str:
 __engine_version__ = _engine_version()
 
 from .profile import DEFAULT_PROFILE, Profile
+from .text import normalize_text
 from . import matching as _matching
 from .matching import MatchResult, calculate_match as _calculate_match_v4, hard_filter_job as _hard_filter_job_v4, priority_band
 from .matching import blend_scores
@@ -69,7 +70,7 @@ _FOREIGN_TITLE_MARKETS = {
     "anglia": "UK", "regatul unit": "UK", "united kingdom": "UK", "marea britanie": "UK", "britain": "UK",
     "belgia": "Belgium", "belgium": "Belgium", "spania": "Spain", "spain": "Spain",
     "italia": "Italy", "italy": "Italy", "portugalia": "Portugal", "portugal": "Portugal",
-    "elvetia": "Switzerland", "elvetia": "Switzerland", "switzerland": "Switzerland",
+    "elvetia": "Switzerland", "switzerland": "Switzerland",
     "polonia": "Poland", "poland": "Poland", "polska": "Poland", "grecia": "Greece", "greece": "Greece",
     "cehia": "Czechia", "czechia": "Czechia", "ungaria": "Hungary", "hungary": "Hungary",
     "suedia": "Sweden", "sweden": "Sweden", "danemarca": "Denmark", "denmark": "Denmark",
@@ -84,6 +85,26 @@ _TECHNICAL_TITLE_BLOCKS = (
     "security engineer", "data scientist", "machine learning engineer", "it governance",
     "it infrastructure", "systems engineer", "system administrator", "database administrator",
 )
+
+_AHMED_HEAVY_TITLE_RE = re.compile(
+    r"\b(?:c\s*[＋+&/]\s*e|c\s*e\b|categoria\s+c(?:e|\+e)?|category\s+c(?:e|\+e)?|cat\.?\s*c(?:e|\+e)?|"
+    r"categoria\s+d|category\s+d|cat\.?\s*d|d\s*[＋+&/]\s*e|permis\s+(?:c|ce|c\+e|d|de)\b|"
+    r"sofer\s+camion|șofer\s+camion|truck\s+driver|tir(?:\s+driver)?|sofer\s+autobuz|șofer\s+autobuz|"
+    r"bus\s+driver|coach\s+driver|camion|autobuz|autocar)\b", re.IGNORECASE)
+
+_AHMED_HEAVY_LICENCE_RE = re.compile(
+    r"(?:permis|licence|license|categoria|category|cat\.?)\s*(?:c\s*[＋+&/]\s*e|c\s*e|ce|c\b|d\b|d\s*[＋+&/]\s*e)", re.IGNORECASE)
+
+def _is_heavy_driver_role(job) -> bool:
+    title = normalize_text(str(job.get("title", "") or ""))
+    desc = normalize_text(str(job.get("description", "") or ""))[:800]
+    if _AHMED_HEAVY_TITLE_RE.search(title):
+        return True
+    if _AHMED_HEAVY_LICENCE_RE.search(f"{title} {desc}"):
+        if re.search(r"(?:categoria|category|cat\.?|permis)\s*b\b", f"{title} {desc}") and not re.search(r"(?:c\s*[＋+&/]\s*e|categoria\s+c|category\s+c|cat\.?\s*c|permis\s+c|categoria\s+d|category\s+d)", f"{title} {desc}"):
+            return False
+        return True
+    return False
 
 
 def _title_foreign_market(job) -> str:
@@ -101,7 +122,32 @@ def _title_foreign_market(job) -> str:
 def _base_calculate_match(job, profile, track=""):
     safe_job = _safe_job_for_matching(job)
     result = _calculate_match_wrapped(safe_job, profile, track)
-    return calibrate_result(result, job=safe_job, profile=profile)
+    result = calibrate_result(result, job=safe_job, profile=profile)
+
+    # A manager/head/director/supervisor title is not evidence of people
+    # management. Quality already applies the management realism guardrail;
+    # remove the misleading leadership-copy claim and its small seniority
+    # contribution without adding a second management penalty.
+    title_n = normalize_text(safe_job.get("title", ""))
+    desc_n = normalize_text(safe_job.get("description", ""))
+    management_title = bool(re.search(r"\b(?:manager|head|director|supervisor)\b", title_n))
+    management_evidence = any(
+        phrase in desc_n
+        for phrase in (
+            "managed a team", "managed team", "team of", "direct reports", "people management",
+            "staff management", "supervised staff", "supervised a team", "led a team",
+            "led teams", "team leadership", "hiring and performance", "performance reviews",
+            "workforce management", "p&l responsibility", "p&l ownership", "budget ownership",
+            "budget management", "department head", "managed employees", "managed staff",
+        )
+    )
+    if management_title and not management_evidence:
+        result.reasons = [r for r in result.reasons if "Leadership role — fits" not in r]
+        result.warnings.append("⚠️ Management scope is not demonstrated in the documented profile")
+        result.score = max(0, int(result.score) - 1)
+        if result.verdict in {"apply", "strong"} and result.score < 70:
+            result.verdict_label, result.verdict = priority_band(result.score, result.confidence)
+    return result
 
 
 from . import driving as _driving
@@ -109,8 +155,11 @@ from . import driving as _driving
 
 def hard_filter_job(job, profile, track=""):
     """Keep valid Category B fallbacks while enforcing Ahmed's hard gates."""
+    if _is_heavy_driver_role(job):
+        return False, "🔴 Heavy-vehicle driver role requires C/C+E/D/TIR licence"
+
     market = _title_foreign_market(job)
-    if market:
+    if market and not getattr(profile, "open_to_relocation", False):
         return False, f"🔴 Job is tied to the {market} labour market, not Romania"
 
     title = str(job.get("title") or "").lower()
