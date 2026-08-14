@@ -1,9 +1,9 @@
 """Ahmed-specific recall and source-normalisation patches.
 
 This module is deliberately small: it does not rewrite the matching engine.
-It widens the Full Career Scan with high-value role synonyms and repairs the
-Hipo card fields at the provider boundary when board markup leaks headings into
-company/location/salary fields.
+It widens the Full Career Scan with high-value role synonyms, repairs the
+Hipo card fields at the provider boundary, and closes a narrow IT-title gap
+found in the live 4.3.6 scan.
 """
 
 from __future__ import annotations
@@ -15,17 +15,22 @@ from .salary import parse_salary
 from .text import normalize_text
 
 
-# Keep the full scan broad enough to recover Ahmed's actual target families,
-# while leaving the hard eligibility gates untouched downstream.
+# Full Career Scan must cover Ahmed's real target families rather than spending
+# its query budget on one generic customer-support synonym. These are still
+# search/retrieval terms; downstream hard gates remain authoritative.
 FULL_SCAN_RECALL_QUERIES = [
     "operations coordinator",
     "operations specialist",
     "financial operations",
     "back office",
+    "order management",
     "customer support",
     "customer service",
-    "compliance officer",
     "arabic customer support",
+    "compliance officer",
+    "tax compliance",
+    "tax specialist",
+    "logistics coordinator",
 ]
 
 _HIPO_CITY_RE = re.compile(
@@ -124,16 +129,38 @@ def _patch_hipo_provider() -> None:
     spec.fetch = wrapped_fetch
 
 
+def _patch_it_title_gap() -> None:
+    """Close IT titles where the token appears after the service/function.
+
+    The existing IT detector correctly catches ``IT Governance`` and
+    ``IT Service`` but a live card such as ``Tehnician Service IT`` places the
+    token at the end. This is title-only on purpose: body mentions of IT
+    systems in ordinary operations/compliance jobs remain harmless.
+    """
+    from . import role_intelligence as _role
+
+    extra = (
+        "tehnician service it",
+        "technician service it",
+        "it service technician",
+        "it technician",
+        "technical service it",
+        "service it technician",
+    )
+    current = tuple(getattr(_role, "IT_TITLE", ()) or ())
+    _role.IT_TITLE = tuple(dict.fromkeys(current + extra))
+
+
 def apply_ahmed_recall_patches() -> None:
     """Install narrow, idempotent patches after the normal provider imports."""
     from . import search as _search
 
-    # The production search layer historically capped every preset at six.
-    # Full Career Scan now intentionally has eight high-value Ahmed queries;
-    # make the cap agree with the policy instead of relying on import order or
-    # a stale runtime constant.
+    # The base search layer historically capped presets at six. The Ahmed
+    # policy deliberately needs a broader retrieval fan-out; the cap must not
+    # silently cut high-value finance/compliance/Arabic/logistics terms.
     _search.MAX_QUERIES = max(int(getattr(_search, "MAX_QUERIES", 6)), len(FULL_SCAN_RECALL_QUERIES))
     _search.CAREER_PRESETS["🔥 Full Career Scan (recommended)"] = list(FULL_SCAN_RECALL_QUERIES)
+    _patch_it_title_gap()
     _patch_hipo_provider()
 
 
