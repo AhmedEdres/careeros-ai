@@ -6,7 +6,7 @@ import hashlib
 import re
 from pathlib import Path
 
-__version__ = "4.3.7"
+__version__ = "4.3.8"
 
 def _engine_version() -> str:
     digest = hashlib.md5()
@@ -60,9 +60,6 @@ def _safe_job_for_matching(job):
     safe_job["category"] = safe_job.get("category") or ""
     return safe_job
 
-
-# Romanian country names commonly appear in job titles even when a board
-# incorrectly reports the Romanian recruiter office as the job location.
 _FOREIGN_TITLE_MARKETS = {
     "olanda": "Netherlands", "netherlands": "Netherlands", "nederland": "Netherlands",
     "germania": "Germany", "germany": "Germany", "deutschland": "Germany",
@@ -123,20 +120,16 @@ def _base_calculate_match(job, profile, track=""):
     safe_job = _safe_job_for_matching(job)
     result = _calculate_match_wrapped(safe_job, profile, track)
     result = calibrate_result(result, job=safe_job, profile=profile)
-
     title_n = normalize_text(safe_job.get("title", ""))
     desc_n = normalize_text(safe_job.get("description", ""))
     management_title = bool(re.search(r"\b(?:manager|head|director|supervisor)\b", title_n))
-    management_evidence = any(
-        phrase in desc_n
-        for phrase in (
-            "managed a team", "managed team", "team of", "direct reports", "people management",
-            "staff management", "supervised staff", "supervised a team", "led a team",
-            "led teams", "team leadership", "hiring and performance", "performance reviews",
-            "workforce management", "p&l responsibility", "p&l ownership", "budget ownership",
-            "budget management", "department head", "managed employees", "managed staff",
-        )
-    )
+    management_evidence = any(phrase in desc_n for phrase in (
+        "managed a team", "managed team", "team of", "direct reports", "people management",
+        "staff management", "supervised staff", "supervised a team", "led a team",
+        "led teams", "team leadership", "hiring and performance", "performance reviews",
+        "workforce management", "p&l responsibility", "p&l ownership", "budget ownership",
+        "budget management", "department head", "managed employees", "managed staff",
+    ))
     if management_title and not management_evidence:
         result.reasons = [r for r in result.reasons if "Leadership role — fits" not in r]
         result.warnings.append("⚠️ Management scope is not demonstrated in the documented profile")
@@ -145,23 +138,17 @@ def _base_calculate_match(job, profile, track=""):
             result.verdict_label, result.verdict = priority_band(result.score, result.confidence)
     return result
 
-
 from . import driving as _driving
 
-
 def hard_filter_job(job, profile, track=""):
-    """Keep valid Category B fallbacks while enforcing Ahmed's hard gates."""
     if _is_heavy_driver_role(job):
         return False, "🔴 Heavy-vehicle driver role requires C/C+E/D/TIR licence"
-
     market = _title_foreign_market(job)
     if market and not getattr(profile, "open_to_relocation", False):
         return False, f"🔴 Job is tied to the {market} labour market, not Romania"
-
     title = str(job.get("title") or "").lower()
     if any(phrase in title for phrase in _TECHNICAL_TITLE_BLOCKS) and "it" not in str(track or "").lower():
         return False, "🔴 Technical IT role outside the documented career track"
-
     keep, reason = _base_hard_filter(job, profile, track)
     if keep:
         return True, ""
@@ -173,7 +160,6 @@ def hard_filter_job(job, profile, track=""):
 def calculate_match(job, profile, track=""):
     result = _base_calculate_match(job, profile, track)
     return _driving.enrich_match_result(job, result, profile, track)
-
 
 _matching.hard_filter_job = hard_filter_job
 _matching.calculate_match = calculate_match
@@ -212,18 +198,15 @@ def _install_version_marker() -> None:
         if getattr(st.title, "_careeros_version_marker", False):
             return
         original_title = st.title
-
         def versioned_title(*args, **kwargs):
             result = original_title(*args, **kwargs)
             if args and args[0] == "🎯 CareerOS AI":
                 st.caption(f"v{__version__} · engine {__engine_version__}")
             return result
-
         versioned_title._careeros_version_marker = True
         st.title = versioned_title
     except Exception:
         return
-
 
 _install_version_marker()
 
