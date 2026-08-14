@@ -1,9 +1,9 @@
 """Ahmed-specific recall and source-normalisation patches.
 
 This module is deliberately small: it does not rewrite the matching engine.
-It widens the Full Career Scan with high-value role synonyms, repairs the
-Hipo card fields at the provider boundary, and closes a narrow IT-title gap
-found in the live 4.3.6 scan.
+It widens the Full Career Scan with high-value role synonyms, including the
+Romanian titles used by local boards, repairs Hipo card fields at the provider
+boundary, and closes a narrow IT-title gap found in the live scan.
 """
 
 from __future__ import annotations
@@ -15,9 +15,9 @@ from .salary import parse_salary
 from .text import normalize_text
 
 
-# Full Career Scan must cover Ahmed's real target families rather than spending
-# its query budget on one generic customer-support synonym. These are still
-# search/retrieval terms; downstream hard gates remain authoritative.
+# Retrieval terms only. Downstream hard gates and scoring remain authoritative.
+# Romanian terms are intentional: local boards often publish the same roles in
+# Romanian and an English-only query misses them before matching even starts.
 FULL_SCAN_RECALL_QUERIES = [
     "operations coordinator",
     "operations specialist",
@@ -31,6 +31,14 @@ FULL_SCAN_RECALL_QUERIES = [
     "tax compliance",
     "tax specialist",
     "logistics coordinator",
+    "specialist conformitate",
+    "specialist fiscal",
+    "coordonator operatiuni",
+    "specialist back office",
+    "coordonator logistica",
+    "suport clienti",
+    "serviciu clienti",
+    "specialist administrativ",
 ]
 
 _HIPO_CITY_RE = re.compile(
@@ -55,9 +63,7 @@ def _company_from_hipo(job: Dict) -> str:
         return match.group(1).strip(" -–—")
     if company and "jobs from hipo" not in normalize_text(company):
         return company.strip()
-    blob = " ".join(
-        str(job.get(key, "") or "") for key in ("description", "description_text")
-    )
+    blob = " ".join(str(job.get(key, "") or "") for key in ("description", "description_text"))
     match = re.search(r"@\s*([^|]+?)\s+Jobs from Hipo\b", blob, re.IGNORECASE)
     return match.group(1).strip(" -–—") if match else ""
 
@@ -75,9 +81,7 @@ def _clean_location(job: Dict) -> str:
         if len(location) <= 80 and not normalize_text(job.get("title", "")) in polluted:
             return location.strip()
 
-    haystack = " ".join(
-        str(job.get(key, "") or "") for key in ("description", "description_text", "location")
-    )
+    haystack = " ".join(str(job.get(key, "") or "") for key in ("description", "description_text", "location"))
     city = _HIPO_CITY_RE.search(haystack)
     if city:
         pretty = city.group(0)
@@ -113,32 +117,21 @@ def _normalise_hipo_job(job: Dict) -> Dict:
 
 def _patch_hipo_provider() -> None:
     from .sources import PROVIDERS
-
     spec = PROVIDERS.get("hipo")
     if spec is None or getattr(spec.fetch, "_ahmed_normalised", False):
         return
-
     original = spec.fetch
-
     def wrapped_fetch(*args, **kwargs):
         result = original(*args, **kwargs)
         result.jobs = [_normalise_hipo_job(job) for job in result.jobs]
         return result
-
     wrapped_fetch._ahmed_normalised = True
     spec.fetch = wrapped_fetch
 
 
 def _patch_it_title_gap() -> None:
-    """Close IT titles where the token appears after the service/function.
-
-    The existing IT detector correctly catches ``IT Governance`` and
-    ``IT Service`` but a live card such as ``Tehnician Service IT`` places the
-    token at the end. This is title-only on purpose: body mentions of IT
-    systems in ordinary operations/compliance jobs remain harmless.
-    """
+    """Close IT titles where the token appears after the service/function."""
     from . import role_intelligence as _role
-
     extra = (
         "tehnician service it",
         "technician service it",
@@ -154,10 +147,6 @@ def _patch_it_title_gap() -> None:
 def apply_ahmed_recall_patches() -> None:
     """Install narrow, idempotent patches after the normal provider imports."""
     from . import search as _search
-
-    # The base search layer historically capped presets at six. The Ahmed
-    # policy deliberately needs a broader retrieval fan-out; the cap must not
-    # silently cut high-value finance/compliance/Arabic/logistics terms.
     _search.MAX_QUERIES = max(int(getattr(_search, "MAX_QUERIES", 6)), len(FULL_SCAN_RECALL_QUERIES))
     _search.CAREER_PRESETS["🔥 Full Career Scan (recommended)"] = list(FULL_SCAN_RECALL_QUERIES)
     _patch_it_title_gap()
