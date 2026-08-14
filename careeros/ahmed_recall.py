@@ -15,6 +15,8 @@ from .salary import parse_salary
 from .text import normalize_text
 
 
+# Keep the full scan broad enough to recover Ahmed's actual target families,
+# while leaving the hard eligibility gates untouched downstream.
 FULL_SCAN_RECALL_QUERIES = [
     "operations coordinator",
     "operations specialist",
@@ -43,13 +45,11 @@ def _display_name(value) -> str:
 def _company_from_hipo(job: Dict) -> str:
     title = str(job.get("title", "") or "")
     company = _display_name(job.get("company"))
-    # The cleanest Hipo card form is "Role @Employer".
     match = re.search(r"@\s*([^|]+?)(?:\s+Jobs from Hipo.*)?$", title, re.IGNORECASE)
     if match:
         return match.group(1).strip(" -–—")
     if company and "jobs from hipo" not in normalize_text(company):
         return company.strip()
-    # Some Hipo cards put the employer only in the card heading/description.
     blob = " ".join(
         str(job.get(key, "") or "") for key in ("description", "description_text")
     )
@@ -67,12 +67,9 @@ def _clean_location(job: Dict) -> str:
     location = _display_name(job.get("location"))
     polluted = normalize_text(location)
     if location and "jobs from hipo" not in polluted and not _HIPO_DATE_RE.search(location):
-        # A clean single-city location is already ideal.
         if len(location) <= 80 and not normalize_text(job.get("title", "")) in polluted:
             return location.strip()
 
-    # Prefer the city actually present in the card. Do not expose the entire
-    # Hipo heading or job title as a location.
     haystack = " ".join(
         str(job.get(key, "") or "") for key in ("description", "description_text", "location")
     )
@@ -93,8 +90,6 @@ def _clean_salary(job: Dict) -> str:
     raw = str(job.get("salary_text", "") or "").strip()
     if not raw:
         return ""
-    # The production parser is authoritative: if a tiny RON/EUR number has no
-    # explicit period it is card noise, not an inferred monthly salary.
     return raw if parse_salary(raw).has_value else ""
 
 
@@ -131,9 +126,14 @@ def _patch_hipo_provider() -> None:
 
 def apply_ahmed_recall_patches() -> None:
     """Install narrow, idempotent patches after the normal provider imports."""
-    from .search import CAREER_PRESETS
+    from . import search as _search
 
-    CAREER_PRESETS["🔥 Full Career Scan (recommended)"] = list(FULL_SCAN_RECALL_QUERIES)
+    # The production search layer historically capped every preset at six.
+    # Full Career Scan now intentionally has eight high-value Ahmed queries;
+    # make the cap agree with the policy instead of relying on import order or
+    # a stale runtime constant.
+    _search.MAX_QUERIES = max(int(getattr(_search, "MAX_QUERIES", 6)), len(FULL_SCAN_RECALL_QUERIES))
+    _search.CAREER_PRESETS["🔥 Full Career Scan (recommended)"] = list(FULL_SCAN_RECALL_QUERIES)
     _patch_hipo_provider()
 
 
