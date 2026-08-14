@@ -6,7 +6,7 @@ import hashlib
 import re
 from pathlib import Path
 
-__version__ = "4.3.5"
+__version__ = "4.3.6"
 
 def _engine_version() -> str:
     digest = hashlib.md5()
@@ -124,10 +124,6 @@ def _base_calculate_match(job, profile, track=""):
     result = _calculate_match_wrapped(safe_job, profile, track)
     result = calibrate_result(result, job=safe_job, profile=profile)
 
-    # A manager/head/director/supervisor title is not evidence of people
-    # management. Quality already applies the management realism guardrail;
-    # remove the misleading leadership-copy claim and its small seniority
-    # contribution without adding a second management penalty.
     title_n = normalize_text(safe_job.get("title", ""))
     desc_n = normalize_text(safe_job.get("description", ""))
     management_title = bool(re.search(r"\b(?:manager|head|director|supervisor)\b", title_n))
@@ -191,7 +187,9 @@ from .search import (
     CAREER_PRESETS, SearchReport, SearchRequest, build_search_queries,
     deduplicate_jobs, run_search as _run_search_raw, score_and_filter,
 )
+from .ahmed_recall import apply_ahmed_recall_patches
 
+apply_ahmed_recall_patches()
 _driving.configure_search_presets(CAREER_PRESETS)
 
 
@@ -207,7 +205,6 @@ from .tracker import Application, ApplicationStore, STATUS_FLOW
 def _install_version_marker() -> None:
     try:
         import streamlit as st
-        # Establish Ahmed's intended defaults before app.py creates keyed widgets.
         st.session_state.setdefault("f_min_score", 35)
         st.session_state.setdefault("f_location", "Romania")
         st.session_state.setdefault("f_hide_lang", True)
