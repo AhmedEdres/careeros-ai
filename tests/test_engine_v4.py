@@ -87,7 +87,7 @@ class TestThreeScores:
         assert 0 <= match.hiring_score <= 100
         assert 0 <= match.score <= 100
 
-    def test_overall_equals_blend(self, profile):
+    def test_overall_includes_ranking_calibration(self, profile):
         match = calculate_match(
             make_job(
                 title="Arabic Customer Support Specialist",
@@ -95,9 +95,11 @@ class TestThreeScores:
             ),
             profile,
         )
-        assert match.score == round(
-            0.40 * match.match_score + 0.25 * match.eligibility_score + 0.35 * match.hiring_score
+        base_blend = round(
+            0.40 * match.match_score + 0.35 * match.eligibility_score + 0.25 * match.hiring_score
         )
+        assert match.score >= base_blend
+        assert any("Direct target-family evidence" in label for label, _ in match.adjustments)
 
 # ---------------------------------------------------------------------------
 # Track tables
