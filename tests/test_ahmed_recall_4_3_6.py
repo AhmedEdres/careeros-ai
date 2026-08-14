@@ -5,7 +5,7 @@ from careeros.search import MAX_QUERIES, SearchRequest
 
 def test_full_scan_expands_high_value_ahmed_role_synonyms():
     queries = CAREER_PRESETS["🔥 Full Career Scan (recommended)"]
-    assert len(queries) == 12
+    assert len(queries) == 20
     assert "operations specialist" in queries
     assert "customer service" in queries
     assert "compliance officer" in queries
@@ -13,14 +13,19 @@ def test_full_scan_expands_high_value_ahmed_role_synonyms():
     assert "tax compliance" in queries
     assert "tax specialist" in queries
     assert "logistics coordinator" in queries
+    assert "specialist conformitate" in queries
+    assert "specialist fiscal" in queries
+    assert "coordonator operatiuni" in queries
+    assert "coordonator logistica" in queries
+    assert "suport clienti" in queries
     assert "sofer categoria B" not in queries
 
 
-def test_full_scan_twelve_queries_survive_search_cap():
-    assert MAX_QUERIES >= 12
+def test_full_scan_twenty_queries_survive_search_cap():
+    assert MAX_QUERIES >= 20
     request = SearchRequest(preset="🔥 Full Career Scan (recommended)", keywords="")
     assert request.resolved_queries() == CAREER_PRESETS["🔥 Full Career Scan (recommended)"]
-    assert len(request.resolved_queries()) == 12
+    assert len(request.resolved_queries()) == 20
 
 
 def test_hipo_heading_does_not_become_company_or_location():

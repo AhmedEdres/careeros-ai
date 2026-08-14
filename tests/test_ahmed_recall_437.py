@@ -14,7 +14,7 @@ def job(title, location="Timișoara", description="", salary=""):
 
 
 def test_full_scan_has_broad_ahmed_recall_queries():
-    expected = {
+    expected_core = {
         "operations coordinator",
         "operations specialist",
         "financial operations",
@@ -28,12 +28,26 @@ def test_full_scan_has_broad_ahmed_recall_queries():
         "tax specialist",
         "logistics coordinator",
     }
+    expected_romanian = {
+        "coordonator operatiuni",
+        "specialist administrativ",
+        "specialist back office",
+        "specialist conformitate",
+        "specialist fiscal",
+        "suport clienti",
+        "serviciu clienti",
+        "coordonator logistica",
+    }
     queries = SearchRequest(
         preset="🔥 Full Career Scan (recommended)",
         keywords="",
     ).resolved_queries()
-    assert set(queries) == expected
-    assert len(queries) == 12
+    query_set = set(queries)
+
+    # 4.3.8 deliberately expands recall with Romanian titles used by local
+    # boards; the English/core queries remain mandatory anchors.
+    assert expected_core <= query_set
+    assert expected_romanian <= query_set
     assert "compliance officer" in CAREER_PRESETS["🔥 Full Career Scan (recommended)"]
 
 
