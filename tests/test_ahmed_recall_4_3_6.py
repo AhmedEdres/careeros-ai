@@ -1,5 +1,6 @@
 from careeros import CAREER_PRESETS
 from careeros.ahmed_recall import _normalise_hipo_job
+from careeros.search import MAX_QUERIES, SearchRequest
 
 
 def test_full_scan_expands_high_value_ahmed_role_synonyms():
@@ -10,6 +11,13 @@ def test_full_scan_expands_high_value_ahmed_role_synonyms():
     assert "compliance officer" in queries
     assert "arabic customer support" in queries
     assert "sofer categoria B" not in queries
+
+
+def test_full_scan_eight_queries_survive_search_cap():
+    assert MAX_QUERIES >= 8
+    request = SearchRequest(preset="🔥 Full Career Scan (recommended)", keywords="")
+    assert request.resolved_queries() == CAREER_PRESETS["🔥 Full Career Scan (recommended)"]
+    assert len(request.resolved_queries()) == 8
 
 
 def test_hipo_heading_does_not_become_company_or_location():
