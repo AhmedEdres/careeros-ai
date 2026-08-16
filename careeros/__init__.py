@@ -6,7 +6,7 @@ import hashlib
 import re
 from pathlib import Path
 
-__version__ = "4.3.8"
+__version__ = "4.3.9"
 
 def _engine_version() -> str:
     digest = hashlib.md5()
@@ -27,6 +27,7 @@ from .matching import MatchResult, calculate_match as _calculate_match_v4, hard_
 from .matching import blend_scores
 from .role_intelligence import wrap_matching
 from .quality import calibrate_result, deduplicate_display_jobs
+from .ranking_calibration import calibrate_ahmed_ranking
 
 _matching.SENIORITY_PATTERNS = dict(getattr(_matching, "SENIORITY_PATTERNS", {}) or {})
 _matching.SENIORITY_PATTERNS.setdefault("leadership", ["manager", "director", "head of", "head", "lead", "chief", "vp", "vice president"])
@@ -136,6 +137,7 @@ def _base_calculate_match(job, profile, track=""):
         result.score = max(0, int(result.score) - 1)
         if result.verdict in {"apply", "strong"} and result.score < 70:
             result.verdict_label, result.verdict = priority_band(result.score, result.confidence)
+    result = calibrate_ahmed_ranking(result, safe_job, profile)
     return result
 
 from . import driving as _driving
