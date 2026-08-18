@@ -202,7 +202,7 @@ def parse_salary(
             return SalaryInfo(raw=raw, currency=currency, period=period)
         amounts = [a for a in (fallback_min, fallback_max) if a is not None]
 
-    amounts = sorted(set(amounts))[:4]
+    amounts = sorted(set(amounts))
     if not amounts:
         return SalaryInfo(raw=raw, currency=currency, period=period)
 
