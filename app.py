@@ -12,7 +12,7 @@ from typing import Dict, List
 
 import streamlit as st
 
-from careeros import __version__
+from careeros import __version__, run_search
 from careeros.ai import AIClient, MODELS
 from careeros.export import applications_to_csv, jobs_to_csv, jobs_to_markdown
 from careeros.matching import (
@@ -30,7 +30,6 @@ from careeros.search import (
     FilterOptions,
     SearchRequest,
     build_search_queries,
-    run_search,
     score_and_filter,
 )
 from careeros.sources import PROVIDERS

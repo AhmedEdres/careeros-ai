@@ -226,8 +226,8 @@ def _location_rank(job: Dict) -> int:
     return 0
 
 
-def _job_identity(job: Dict) -> Tuple[str, str]:
-    """Return (url_key, content_key) used for deduplication."""
+def _job_identity(job: Dict) -> Tuple[str, str, str]:
+    """Return (url_key, content_key, company) used for deduplication."""
     url_key = canonical_url(job.get("redirect_url", ""))
     title = normalize_text(job.get("title", ""))
     company = normalize_text(safe_company_name(job.get("company")))
@@ -235,7 +235,7 @@ def _job_identity(job: Dict) -> Tuple[str, str]:
     location = normalize_text(str((job.get("location") or {}).get("display_name", "")))
     location_token = location.split(",")[0].strip()
     content_key = text_hash(f"{title}|{company}|{location_token}")
-    return url_key, content_key
+    return url_key, content_key, company
 
 
 def deduplicate_jobs(jobs: List[Dict]) -> Tuple[List[Dict], int]:
@@ -243,15 +243,21 @@ def deduplicate_jobs(jobs: List[Dict]) -> Tuple[List[Dict], int]:
     by_key: Dict[str, Dict] = {}
     order: List[str] = []
     url_to_key: Dict[str, str] = {}
+    url_to_company: Dict[str, str] = {}
     removed = 0
 
     for job in jobs:
-        url_key, content_key = _job_identity(job)
+        url_key, content_key, company = _job_identity(job)
         key = url_to_key.get(url_key) if url_key else None
+        if key is not None and url_to_company.get(url_key) != company:
+            # Same redirect URL but a different employer — a shared/generic
+            # "apply here" link, not the same posting. Do not merge.
+            key = None
         if key is None:
             key = content_key
         if url_key:
             url_to_key[url_key] = key
+            url_to_company[url_key] = company
 
         existing = by_key.get(key)
         if existing is None:

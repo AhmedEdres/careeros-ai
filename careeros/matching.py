@@ -681,11 +681,12 @@ def hard_filter_job(job: Dict, profile: Profile, track: str = "") -> Tuple[bool,
 # ---------------------------------------------------------------------------
 # Dimensions
 # ---------------------------------------------------------------------------
-def _score_location(loc: str, desc: str, profile: Profile, result: MatchResult) -> int:
+def _score_location(
+    loc: str, desc: str, profile: Profile, result: MatchResult, market: Optional[str] = None
+) -> int:
     home = normalize_text(profile.location)
     remote_class = classify_remote_geography(loc, desc)
     result.remote = remote_class
-    market = foreign_labour_market(loc, "", desc)
     if market:
         if profile.open_to_relocation and remote_class == "not_remote":
             result.reasons.append(f"🌍 {market} — relocation possible")
@@ -982,6 +983,7 @@ def _score_eligibility(
     result: MatchResult,
     blocking: List[str],
     pressure: float,
+    market: Optional[str] = None,
 ) -> int:
     """Can he legally and practically take this job? Absence of barriers is
     *not* a large bonus — only positive evidence of access scores highly.
@@ -989,7 +991,17 @@ def _score_eligibility(
     score = 16
     notes: List[str] = []
 
-    if contains_phrase(loc, normalize_text(profile.location)) or contains_any(
+    if market and result.remote == "not_remote":
+        # Title/description pin this on-site role to a specific foreign
+        # labour market even though the location field reads Romanian —
+        # must not be scored as if it were a local, work-authorised role.
+        if profile.open_to_relocation:
+            score += 8
+            notes.append(f"🌍 {market} — relocation possible, but work authorisation is not yet in place")
+        else:
+            score -= 20
+            notes.append(f"🚫 On-site in {market} — not reachable from {profile.location} without relocating")
+    elif contains_phrase(loc, normalize_text(profile.location)) or contains_any(
         loc, LOCATION_SYNONYMS.get("Timișoara", [])
     ):
         score += 42
@@ -1116,6 +1128,7 @@ def _score_hiring(
     track: str,
     match_dims: Dict[str, int],
     match_score: int = 0,
+    market: Optional[str] = None,
 ) -> int:
     """Would a recruiter realistically shortlist him for this posting?"""
     score = 26
@@ -1139,7 +1152,12 @@ def _score_hiring(
     elif arabic == "mentioned":
         score += 4
 
-    if contains_phrase(loc, normalize_text(profile.location)) or contains_any(
+    if market and result.remote == "not_remote":
+        # A recruiter in the actual foreign market cannot treat him as a
+        # local, no-relocation-risk candidate just because the board's
+        # location field reads Romanian.
+        risks.append(f"📉 Role is tied to the {market} labour market — relocation risk for the employer")
+    elif contains_phrase(loc, normalize_text(profile.location)) or contains_any(
         loc, LOCATION_SYNONYMS.get("Timișoara", [])
     ):
         score += 10
@@ -1229,8 +1247,13 @@ def calculate_match(job: Dict, profile: Profile, track: str = "") -> MatchResult
     full, title, loc, desc = _job_text(job)
     result = MatchResult(track=resolved)
 
+    # Computed once so location, eligibility and hiring-reality scoring all
+    # agree on whether this posting is actually tied to a foreign market —
+    # the hard filter already does this with the raw (unnormalised) title.
+    market = foreign_labour_market(loc, title, desc)
+
     raw = {
-        "location": _score_location(loc, desc, profile, result),
+        "location": _score_location(loc, desc, profile, result, market),
         "skills": _score_skills(full, title, result, resolved),
         "arabic": _score_arabic(full, result),
         "english": _score_english(full, result),
@@ -1280,11 +1303,11 @@ def calculate_match(job: Dict, profile: Profile, track: str = "") -> MatchResult
 
     match_score = _clamp(match_total)
     eligibility_score = _score_eligibility(
-        full, loc, desc, profile, result, blocking_languages, pressure,
+        full, loc, desc, profile, result, blocking_languages, pressure, market,
     )
     hiring_score = _score_hiring(
         job, profile, full, title, loc, result,
-        blocking_languages, pressure, resolved, dims, match_score,
+        blocking_languages, pressure, resolved, dims, match_score, market,
     )
 
     result.dimensions = dims
