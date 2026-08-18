@@ -65,9 +65,7 @@ def calibrate_ahmed_ranking(result, job, profile):
         result.adjustments.append(("Unverified management scope", -penalty))
 
     # Direct target-family evidence must matter more than generic keyword
-    # overlap. This is still a ranking adjustment, not an eligibility bypass.
-    # Title evidence is intentionally stronger than description-only evidence:
-    # the title is the employer's own statement of the function being hired for.
+    # overlap. Title evidence is stronger than description-only evidence.
     direct_signals = (
         "tax specialist", "tax officer", "tax compliance", "tax advisor",
         "tax consultant", "specialist fiscal", "ofițer fiscal", "ofiter fiscal",
@@ -76,20 +74,34 @@ def calibrate_ahmed_ranking(result, job, profile):
         "order management", "logistics coordinator", "customer support specialist",
         "customer service specialist", "customer support", "customer service",
     )
+    tax_title_signals = (
+        "tax specialist", "tax officer", "tax compliance", "tax advisor",
+        "tax consultant", "specialist fiscal", "ofițer fiscal", "ofiter fiscal",
+    )
     direct_title = any(signal in title for signal in direct_signals)
     direct_body = any(signal in desc for signal in direct_signals)
-    if direct_title:
+    direct_tax_title = any(signal in title for signal in tax_title_signals)
+
+    if direct_tax_title:
+        # Tax/fiscal is Ahmed's strongest documented target family. Give it a
+        # small additional edge over generic operations/customer-support titles.
+        bonus = 10
+        result.match_score = min(100, int(result.match_score) + bonus)
+        result.score = min(100, int(result.score) + bonus)
+        result.reasons.append("🎯 Direct target-family evidence — tax/fiscal title prioritized")
+        result.adjustments.append(("Direct target-family evidence: tax/fiscal title priority", bonus))
+    elif direct_title:
         bonus = 8
         result.match_score = min(100, int(result.match_score) + bonus)
         result.score = min(100, int(result.score) + bonus)
         result.reasons.append("🎯 Direct title-family evidence — prioritized for your target career")
-        result.adjustments.append(("Direct target-family title priority", bonus))
+        result.adjustments.append(("Direct target-family evidence: title priority", bonus))
     elif direct_body:
         bonus = 2
         result.match_score = min(100, int(result.match_score) + bonus)
         result.score = min(100, int(result.score) + bonus)
         result.reasons.append("🎯 Direct target-family evidence in job description")
-        result.adjustments.append(("Direct target-family body evidence", bonus))
+        result.adjustments.append(("Direct target-family evidence: body", bonus))
 
     salary = getattr(result, "salary", None)
     high_salary = bool(salary and getattr(salary, "has_value", False) and
