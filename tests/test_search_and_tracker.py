@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from careeros import calculate_match
 from careeros.profile import Profile
 from careeros.search import (
     FilterOptions,
@@ -53,7 +54,6 @@ class TestDeduplication:
         ]
         unique, removed = deduplicate_jobs(jobs)
         assert len(unique) == 1
-        # The richer record wins and sources are merged.
         assert len(unique[0]["description"]) > 100
         assert unique[0]["duplicate_count"] == 2
 
@@ -111,6 +111,37 @@ class TestScoreAndFilter:
         kept, stats = score_and_filter(jobs, Profile(), FilterOptions(min_score=0))
         assert stats["rejected_hard"] == 1 and kept == []
 
+    def test_direct_tax_title_gets_priority_bonus(self):
+        profile = Profile()
+        direct = job(
+            title="Tax Compliance Specialist",
+            url="https://example.com/tax",
+            description="tax compliance, regulatory reporting, Excel, English B2",
+            salary_text="5500 RON",
+        )
+        generic = job(
+            title="Finance Operations Specialist",
+            url="https://example.com/finance",
+            description="finance operations, reporting, Excel, ERP, English B2",
+            salary_text="5500 RON",
+        )
+        direct_result = calculate_match(direct, profile)
+        generic_result = calculate_match(generic, profile)
+        assert direct_result.score > generic_result.score
+        assert any("Direct target-family evidence" in r for r in direct_result.reasons)
+
+    def test_direct_operations_title_gets_priority_bonus(self):
+        result = calculate_match(
+            job(
+                title="Operations Coordinator",
+                description="operations, order management, customer service, Excel, English B2",
+                salary_text="6000 RON",
+            ),
+            Profile(),
+        )
+        assert any("Direct title-family evidence" in r for r in result.reasons)
+        assert any("Direct target-family evidence: title priority" in a[0] for a in result.adjustments)
+
 
 class TestDateParsing:
     def test_iso_formats(self):
@@ -130,7 +161,7 @@ class TestApplicationStore:
         store = ApplicationStore(path=str(tmp_path / "a.json"))
         store.add("https://example.com/1", title="Analyst", company="ACME", match_score=80)
         assert len(store) == 1
-        assert "https://www.example.com/1?utm_source=x" in store  # canonical match
+        assert "https://www.example.com/1?utm_source=x" in store
 
     def test_status_update(self, tmp_path):
         store = ApplicationStore(path=str(tmp_path / "a.json"))
@@ -155,7 +186,7 @@ class TestApplicationStore:
     def test_readonly_filesystem_does_not_raise(self):
         store = ApplicationStore(path="/proc/definitely-not-writable/a.json")
         store.add("https://example.com/1", title="Analyst")
-        assert len(store) == 1          # still tracked in memory
+        assert len(store) == 1
         assert store.persistent is False
 
     def test_legacy_format_is_readable(self, tmp_path):

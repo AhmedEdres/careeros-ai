@@ -6,7 +6,7 @@ import hashlib
 import re
 from pathlib import Path
 
-__version__ = "4.3.9"
+__version__ = "4.3.10"
 
 def _engine_version() -> str:
     digest = hashlib.md5()

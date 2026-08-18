@@ -10,11 +10,6 @@ from .matching import MatchResult, blend_scores, priority_band
 from .text import normalize_text, safe_company_name, text_hash
 
 
-# The quality layer deliberately gives recruiter reality more influence than
-# raw keyword similarity.  This is the final ranking layer used by the public
-# matcher in careeros/__init__.py.
-REALITY_BLEND = {"match": 0.40, "eligibility": 0.25, "hiring": 0.35}
-
 # Recruiter-readiness ceilings. A high semantic match must not rescue a role
 # where the documented profile would normally fail the first screening pass.
 HIRING_CEILINGS = ((50, 49), (60, 59), (70, 69))
@@ -370,12 +365,9 @@ def calibrate_result(result: MatchResult, job: Optional[Dict] = None, profile=No
         return result
 
     guardrail_applied = bool(management_penalty or credential_penalty or specialized_penalty)
-    raw = (
-        REALITY_BLEND["match"] * result.match_score
-        + REALITY_BLEND["eligibility"] * result.eligibility_score
-        + REALITY_BLEND["hiring"] * result.hiring_score
-    )
-    score = int(round(max(0, min(100, raw))))
+    # Re-blend with the v4 matcher's own 40/35/25 weighting (matching.blend_scores)
+    # so the weak-match cap still applies after realism penalties adjust hiring_score.
+    score = blend_scores(result.match_score, result.eligibility_score, result.hiring_score)
 
     # High-match jobs still need recruiter readiness.  This is intentionally
     # applied after penalties so the visible score is the realistic score.
