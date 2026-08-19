@@ -51,6 +51,7 @@ from .tracks import (
     BASE_DIMENSION_MAX,
     DEFAULT_TRACK,
     LOGISTICS_ALLOWED_TITLES,
+    TRACK_AHMED_OFFICE,
     TRACK_LOGISTICS,
     dimension_max as track_dimension_max,
     resolve_track,
@@ -1085,6 +1086,7 @@ def _title_track_alignment(title: str, track: str) -> int:
     finance = ["finance", "financial", "account", "tax", "compliance", "audit", "aml", "kyc"]
     support = ["support", "service", "customer", "client", "help desk", "call center", "bpo"]
     ops = ["operations", "coordinator", "back office", "administrator", "specialist"]
+    legal = ["legal", "contract", "paralegal", "regulatory"]
     arabic = ["arabic"]
     logistics = [
         "logistics", "warehouse", "supply", "freight", "production", "operator",
@@ -1096,6 +1098,9 @@ def _title_track_alignment(title: str, track: str) -> int:
         "⚙️ Operations & Back Office": ops,
         "🗣️ Arabic-Speaking Roles": arabic + support,
         "🏭 Logistics & Production": logistics,
+        # English-first office identity: tax/compliance/legal/admin/ops/support,
+        # deliberately excluding the logistics/production word list.
+        TRACK_AHMED_OFFICE: finance + support + ops + legal,
     }
     words = tables.get(track)
     if not words:

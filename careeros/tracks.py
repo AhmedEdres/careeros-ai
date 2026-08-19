@@ -18,6 +18,7 @@ __all__ = [
     "TRACK_SUPPORT",
     "TRACK_ARABIC",
     "TRACK_LOGISTICS",
+    "TRACK_AHMED_OFFICE",
     "TRACK_CUSTOM",
     "ALL_TRACKS",
     "DEFAULT_TRACK",
@@ -38,6 +39,12 @@ TRACK_OPERATIONS = "⚙️ Operations & Back Office"
 TRACK_SUPPORT = "📞 Customer Support & BPO"
 TRACK_ARABIC = "🗣️ Arabic-Speaking Roles"
 TRACK_LOGISTICS = "🏭 Logistics & Production"
+# Ahmed's real hiring target: English-first office roles (Tax / Compliance /
+# Legal / Administration / Operations / Customer Support / BPO / KYC / AML /
+# Banking Operations) in Timișoara/Romania. Production/warehouse/driving stay
+# available as a *fallback*, not primary evidence, on this track — see
+# TRACK_SKILL_MULTIPLIERS below.
+TRACK_AHMED_OFFICE = "🇷🇴 Ahmed – English-First Office"
 TRACK_CUSTOM = "📝 Custom keywords"
 
 ALL_TRACKS = (
@@ -47,6 +54,7 @@ ALL_TRACKS = (
     TRACK_SUPPORT,
     TRACK_ARABIC,
     TRACK_LOGISTICS,
+    TRACK_AHMED_OFFICE,
     TRACK_CUSTOM,
 )
 
@@ -128,6 +136,20 @@ TRACK_WEIGHTS: Dict[str, Dict[str, int]] = {
         "education": 4,
         "relevance": 8,
     },
+    # Tax/Compliance/Legal/Administration/Operations/Support/KYC/AML/Banking —
+    # Ahmed's primary office identity. Skills carries the most weight since
+    # this track spans several adjacent office families; English matters more
+    # than on other tracks (English-first), Arabic stays a strong asset.
+    TRACK_AHMED_OFFICE: {
+        "location": 16,
+        "skills": 30,
+        "arabic": 14,
+        "english": 12,
+        "experience": 10,
+        "salary": 10,
+        "education": 6,
+        "relevance": 2,
+    },
 }
 
 _UNITY = {
@@ -182,6 +204,20 @@ TRACK_SKILL_MULTIPLIERS: Dict[str, Dict[str, float]] = {
         "tools": 1.1,
         "languages_market": 0.4,
     },
+    # Office-identity track: production/warehouse/driving evidence must not
+    # become primary evidence here — those stay real fallback options, scored
+    # fully on their own tracks (Logistics & Production), but should not
+    # inflate an office-role match just because a listing mentions a Category
+    # B licence or "warehouse" in passing.
+    TRACK_AHMED_OFFICE: {
+        "operations_support": 1.3,
+        "finance_compliance": 1.3,
+        "logistics": 0.3,
+        "production": 0.15,
+        "driving": 0.15,
+        "tools": 1.1,
+        "languages_market": 1.2,
+    },
 }
 
 # Baseline Romanian-dependence of the *role family*. Location then scales it:
@@ -194,6 +230,7 @@ TRACK_RO_PRESSURE: Dict[str, float] = {
     TRACK_SUPPORT: 0.8,
     TRACK_ARABIC: 0.55,
     TRACK_LOGISTICS: 0.9,
+    TRACK_AHMED_OFFICE: 0.9,
 }
 
 
