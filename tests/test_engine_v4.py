@@ -105,8 +105,10 @@ class TestThreeScores:
 # Track tables
 # ---------------------------------------------------------------------------
 class TestTrackTables:
-    def test_seven_tracks(self):
-        assert len(ALL_TRACKS) == 7
+    def test_eight_tracks(self):
+        # v5: adds the dedicated Ahmed office track (tax/compliance/legal/
+        # admin/ops/support/KYC/AML) alongside the original seven.
+        assert len(ALL_TRACKS) == 8
 
     def test_logistics_track_exists(self):
         assert TRACK_LOGISTICS in ALL_TRACKS

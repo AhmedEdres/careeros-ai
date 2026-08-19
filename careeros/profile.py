@@ -82,9 +82,12 @@ SKILL_GROUPS: Dict[str, Dict] = {
     ]},
     "finance_compliance": {"label": "Finance / Compliance / Legal", "weight": 18, "words": [
         "finance", "financial", "accounting", "accountant", "contabil", "accounts payable", "accounts receivable", "bookkeeping",
-        "general ledger", "reconciliation", "tax", "taxation", "fiscal", "compliance", "regulatory", "invoice", "invoicing", "billing",
-        "legal", "juridic", "audit", "auditor", "auditing", "banking", "collections", "debt recovery", "treasury", "credit control",
-        "risk", "aml", "anti money laundering", "kyc", "know your customer", "due diligence", "sanctions", "financial analyst",
+        "general ledger", "reconciliation", "tax", "taxation", "fiscal", "tax consultant", "compliance", "regulatory",
+        "regulatory compliance", "invoice", "invoicing", "billing",
+        "legal", "juridic", "legal assistant", "legal specialist", "paralegal", "contract administrator", "contract specialist",
+        "audit", "auditor", "auditing", "banking", "banking operations", "collections", "debt recovery", "treasury", "credit control",
+        "risk", "aml", "anti money laundering", "kyc analyst", "aml analyst", "compliance analyst", "kyc", "know your customer",
+        "due diligence", "sanctions", "financial analyst",
         "financial controller", "controlling", "o2c", "order to cash", "p2p", "procure to pay", "r2r", "record to report", "payroll",
     ]},
     "logistics": {"label": "Logistics / Supply Chain", "weight": 10, "words": [

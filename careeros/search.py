@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from .matching import MatchResult, calculate_match, classify_remote_geography, hard_filter_job
 from .profile import LOCATION_SYNONYMS, Profile
-from .tracks import DEFAULT_TRACK, resolve_track
+from .tracks import DEFAULT_TRACK, TRACK_AHMED_OFFICE, resolve_track
 from .sources import PROVIDERS, SourceResult, build_session, fetch_source
 from .text import (
     canonical_url,
@@ -76,6 +76,30 @@ CAREER_PRESETS: Dict[str, List[str]] = {
         "production operator",
         "quality inspector",
     ],
+    # Ahmed's primary office identity: Tax / Compliance / Legal / Administration
+    # / Operations / Customer Support / BPO / KYC / AML / Banking Operations.
+    # Each entry is a meaningful phrase, not a bag of words — see
+    # sources/providers.py._keyword_filter for why that matters.
+    TRACK_AHMED_OFFICE: [
+        "tax specialist",
+        "tax compliance",
+        "fiscal specialist",
+        "compliance specialist",
+        "kyc analyst",
+        "aml analyst",
+        "regulatory compliance",
+        "operations specialist",
+        "operations coordinator",
+        "back office",
+        "business operations",
+        "customer support",
+        "customer service",
+        "legal specialist",
+        "contract administrator",
+        "arabic customer support",
+        "finance operations",
+        "shared services",
+    ],
     "📝 Custom keywords": [],
 }
 
@@ -87,13 +111,16 @@ _EXPANSIONS = {
     "finance": ["financial operations", "financial analyst", "financial compliance"],
     "back office": ["back office operations", "shared services", "data entry"],
     "tax": ["tax compliance", "tax specialist", "tax accounting"],
-    "compliance": ["compliance officer", "aml kyc", "regulatory compliance"],
+    "compliance": ["compliance officer", "compliance specialist", "regulatory compliance"],
+    "kyc": ["kyc analyst", "aml analyst", "compliance analyst"],
+    "aml": ["aml analyst", "kyc analyst", "regulatory compliance"],
     "arabic": ["arabic customer support", "arabic speaking", "arabic operations"],
     "sap": ["sap specialist", "erp specialist", "sap operations"],
     "logistics": ["supply chain", "warehouse coordinator", "freight forwarding"],
     "production": ["production operator", "production planner", "quality inspector"],
     "warehouse": ["warehouse coordinator", "inventory controller", "forklift"],
-    "legal": ["legal assistant", "paralegal", "contract administrator"],
+    "legal": ["legal specialist", "legal assistant", "contract administrator"],
+    "contract": ["contract administrator", "contract specialist", "legal assistant"],
 }
 
 MAX_QUERIES = 6

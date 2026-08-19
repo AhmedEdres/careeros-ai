@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 import re
-from .text import clean_html_text, contains_any, normalize_text
+from .text import clean_html_text, contains_any, contains_phrase, normalize_text
 
 @dataclass(frozen=True)
 class RoleAssessment:
@@ -60,7 +60,11 @@ def _job_parts(job: Dict) -> Tuple[str, str]:
     return title, desc
 
 def _hits(text: str, signals: Tuple[str, ...]) -> List[str]:
-    return [s for s in signals if s in text]
+    # Whole-word/phrase matching only: naive substring containment let short
+    # acronym signals like "sem" (SEM/paid-search) match inside ordinary
+    # words such as "assembly", silently misclassifying production/office
+    # jobs as marketing and hard-rejecting them.
+    return [s for s in signals if contains_phrase(text, s)]
 
 def assess_role(job: Dict) -> RoleAssessment:
     title, desc = _job_parts(job)

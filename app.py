@@ -23,7 +23,7 @@ from careeros.matching import (
     priority_band,
 )
 from careeros.profile import CEFR_ORDER, Profile
-from careeros.tracks import DEFAULT_TRACK, track_weights
+from careeros.tracks import DEFAULT_TRACK, TRACK_AHMED_OFFICE, track_weights
 from careeros.salary import format_salary
 from careeros.search import (
     CAREER_PRESETS,
@@ -229,6 +229,7 @@ with st.sidebar:
     st.header("🎯 Search strategy")
     track_labels = {
         "🔥 Full Career Scan (recommended)": "🔥 Full Career Scan (recommended)",
+        TRACK_AHMED_OFFICE: TRACK_AHMED_OFFICE,
         "⚙️ Operations & Back Office": "⚙️ Operations & Back Office",
         "📞 Customer Support & BPO": "📞 Customer Support & BPO",
         "🗣️ Arabic-Speaking Roles": "🗣️ Arabic-Speaking Roles",
