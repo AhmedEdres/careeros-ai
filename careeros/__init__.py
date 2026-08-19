@@ -99,6 +99,12 @@ _TECHNICAL_TITLE_BLOCKS = (
     # routinely list "customer service" as a soft skill, which defeated the
     # override on the exact posting this phrase exists to catch.
     "service desk engineer",
+    # "Data Architect" is data-engineering/IT-architecture work regardless of
+    # the business domain it sits in (e.g. "Data Architect — Automotive
+    # Finance & Controlling"). The domain label plus SAP/ERP/SQL tool mentions
+    # inflate the skills match even though the function itself — designing
+    # data systems — is not evidenced anywhere in Ahmed's profile.
+    "data architect",
 )
 
 # "Security Specialist" / "Security Officer" must NOT be globally blocked —

@@ -376,3 +376,45 @@ class TestOfficeTrackFalsePositiveFixes:
         full_score = calculate_match(compliance_officer, DEFAULT_PROFILE, track=DEFAULT_TRACK).score
         office_score = calculate_match(compliance_officer, DEFAULT_PROFILE, track=TRACK_AHMED_OFFICE).score
         assert office_score >= full_score
+
+
+# ---------------------------------------------------------------------------
+# Second follow-up fix from real-data validation (post-merge, salary filter
+# off): "Data Architect" scored 82%/APPLY on the office track despite being
+# a data-engineering/IT-architecture role Ahmed has no evidence for. The
+# "Automotive Finance & Controlling" domain label plus SAP/ERP/SQL tool
+# mentions inflated the skills match even though the function itself was
+# never on any IT block list.
+# ---------------------------------------------------------------------------
+class TestDataArchitectFalsePositiveFix:
+    def test_real_data_architect_posting_is_rejected(self):
+        # Real posting text (Hipo, AUMOVIO Romania) that surfaced this false
+        # positive: scored 82%/APPLY on the office track before the fix.
+        posting = job(
+            "Data Architect (m/f/div) - Automotive Finance & Controlling",
+            "Timisoara",
+            "Design and maintain data models, ETL pipelines and the enterprise data "
+            "warehouse for Finance and Controlling. SAP, SQL, Excel reporting.",
+        )
+        keep, reason = hard_filter_job(posting, DEFAULT_PROFILE, TRACK_AHMED_OFFICE)
+        assert keep is False
+        assert "it" in reason.lower() or "technical" in reason.lower()
+
+    def test_fix_is_track_independent(self):
+        posting = job(
+            "Data Architect (m/f/div) - Automotive Finance & Controlling",
+            "Timisoara",
+            "Design and maintain data models, ETL pipelines and the enterprise data "
+            "warehouse for Finance and Controlling. SAP, SQL, Excel reporting.",
+        )
+        keep, _ = hard_filter_job(posting, DEFAULT_PROFILE, DEFAULT_TRACK)
+        assert keep is False
+
+    def test_unrelated_finance_and_compliance_titles_are_unaffected(self):
+        for title, desc in (
+            ("Finance Analyst", "SAP, Excel, financial reporting, controlling."),
+            ("Compliance Case Manager - Tires", "Compliance, regulatory, English required."),
+        ):
+            posting = job(title, "Timisoara", desc)
+            keep, reason = hard_filter_job(posting, DEFAULT_PROFILE, TRACK_AHMED_OFFICE)
+            assert keep is True, f"{title!r} should not be affected by the Data Architect exclusion: {reason}"
