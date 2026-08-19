@@ -6,6 +6,7 @@ confirm the pre-existing Romanian/German/phrase-aware guardrails still hold.
 """
 
 from careeros import DEFAULT_PROFILE, calculate_match, hard_filter_job
+from careeros.matching import classify_remote_geography, foreign_labour_market
 from careeros.search import CAREER_PRESETS, SearchRequest
 from careeros.sources.providers import _keyword_filter
 from careeros.tracks import (
@@ -418,3 +419,80 @@ class TestDataArchitectFalsePositiveFix:
             posting = job(title, "Timisoara", desc)
             keep, reason = hard_filter_job(posting, DEFAULT_PROFILE, TRACK_AHMED_OFFICE)
             assert keep is True, f"{title!r} should not be affected by the Data Architect exclusion: {reason}"
+
+
+# ---------------------------------------------------------------------------
+# Third follow-up fix, found via manual audit of hard-rejected jobs: a
+# remote posting naming "EMEA" plus exactly one other country in the
+# location field (e.g. "Remote — EMEA, Germany") was being treated as that
+# one country's exclusive labour market, discarding the fact that "EMEA"
+# already unambiguously includes Romania. Two independent code paths had
+# this bug: matching.foreign_labour_market/classify_remote_geography, and a
+# separate duplicate check in careeros/__init__.py._title_foreign_market
+# used for the relocation gate. Fixed narrowly: only when EMEA is present
+# AND exactly one other country is named — bare "Europe"/"EU" plus one
+# country (already a deliberate, documented restrictive choice) and any
+# case with 2+ named countries are both left untouched.
+# ---------------------------------------------------------------------------
+class TestEmeaMultiRegionGeographyFix:
+    def test_real_compliance_style_posting_with_emea_plus_country_is_kept(self):
+        # Same location pattern as the real postings that surfaced this bug
+        # (Remotive: "Remote — EMEA, Germany" / "Remote — EMEA, UK"), applied
+        # to a non-IT title so the geography fix is tested in isolation.
+        posting = job(
+            "Compliance Analyst",
+            "Remote — EMEA, Germany",
+            "Support regulatory compliance and KYC reviews for EMEA clients. English required.",
+        )
+        keep, reason = hard_filter_job(posting, DEFAULT_PROFILE, TRACK_AHMED_OFFICE)
+        assert keep is True, reason
+        result = calculate_match(posting, DEFAULT_PROFILE, TRACK_AHMED_OFFICE)
+        assert result.remote == "remote_eu"
+
+    def test_real_data_lakes_posting_now_rejected_for_it_not_geography(self):
+        # Real posting text (Remotive) that surfaced this bug: location
+        # "Remote — EMEA,  Germany" was wrongly reported as a Germany-only
+        # restriction. The job is still correctly rejected (it's IT), but
+        # now for the honest reason.
+        posting = job(
+            "Principal Software Engineer - Data Lakes",
+            "Remote — EMEA,  Germany",
+            "Build and scale our data lake platform. Python, Spark, cloud infrastructure.",
+        )
+        keep, reason = hard_filter_job(posting, DEFAULT_PROFILE, TRACK_AHMED_OFFICE)
+        assert keep is False
+        assert "germany" not in reason.lower()
+        assert "it" in reason.lower() or "technical" in reason.lower()
+
+    def test_foreign_labour_market_emea_plus_one_country_returns_none(self):
+        assert foreign_labour_market("Remote — EMEA, Germany", "", "") is None
+        assert foreign_labour_market("Remote — EMEA,  Germany", "", "") is None
+
+    def test_classify_remote_geography_emea_plus_one_country_is_remote_eu(self):
+        assert classify_remote_geography("Remote — EMEA, Germany", "") == "remote_eu"
+
+    def test_emea_alone_still_open(self):
+        assert foreign_labour_market("Remote — EMEA", "", "") is None
+        assert classify_remote_geography("Remote — EMEA", "") == "remote_eu"
+
+    def test_bare_europe_plus_one_country_still_restricts_deliberately(self):
+        # Deliberately-preserved, documented behavior: "Europe" (not "EMEA")
+        # plus one named country stays restrictive. Must be unchanged.
+        assert foreign_labour_market("Remote — Europe, Netherlands", "", "") == "Netherlands"
+        assert classify_remote_geography("Remote — Europe, Netherlands", "") == "remote_unclear"
+
+    def test_single_foreign_country_alone_still_restricts(self):
+        assert foreign_labour_market("Remote — Greece", "", "") == "Greece"
+        assert classify_remote_geography("Remote — Greece", "") == "remote_unclear"
+
+    def test_multiple_named_countries_alongside_emea_is_a_known_separate_gap(self):
+        # Documents current (unfixed) behavior for a related-but-distinct
+        # pattern: 2+ distinct countries named together (not just one)
+        # alongside EMEA. Real posting: "Remote — Europe, EMEA, UK, Germany,
+        # France, European timezones" is still tied to one arbitrary country.
+        # Intentionally not in scope for this fix — flagged for a future,
+        # separately-scoped change if needed.
+        market = foreign_labour_market(
+            "Remote — Europe, EMEA, UK, Germany, France, European timezones", "", ""
+        )
+        assert market is not None
