@@ -10,6 +10,7 @@ from careeros.search import CAREER_PRESETS, SearchRequest
 from careeros.sources.providers import _keyword_filter
 from careeros.tracks import (
     ALL_TRACKS,
+    DEFAULT_TRACK,
     TRACK_AHMED_OFFICE,
     TRACK_LOGISTICS,
     track_weights,
@@ -201,3 +202,177 @@ class TestCoreBlendUnchanged:
 
     def test_new_track_weight_table_sums_to_100(self):
         assert sum(track_weights(TRACK_AHMED_OFFICE).values()) == 100
+
+
+# ---------------------------------------------------------------------------
+# Follow-up fix from real-data ranking validation: two IT-technical titles
+# were surfacing as false positives specifically on the office track (higher
+# skills ceiling pushed them past the "skip" threshold). Fixed with a precise
+# title exclusion (Service Desk Engineer) and an evidence-gated exclusion
+# (Security Specialist/Officer) rather than a blanket block, since generic
+# "security specialist" postings can be legitimately relevant to Ahmed.
+# ---------------------------------------------------------------------------
+class TestOfficeTrackFalsePositiveFixes:
+    def test_real_service_desk_engineer_posting_is_rejected(self):
+        # Real posting text (Remotive) that surfaced this false positive:
+        # scored 61/"low" and was visible on the office track before the fix.
+        posting = job(
+            "Tier III Service Desk Engineer",
+            "Remote",
+            "Unio Digital is an Arizona-based managed service provider (MSP) delivering "
+            "Managed IT Services, Low Voltage Cabling, Access Control, Video Surveillance, "
+            "and Intrusion Services. We are looking for an experienced Tier 3 Service Desk "
+            "Technician with exceptional problem-solving skills, resolving complex technical "
+            "issues, providing above and beyond support and excellent customer service.",
+        )
+        keep, reason = hard_filter_job(posting, DEFAULT_PROFILE, TRACK_AHMED_OFFICE)
+        assert keep is False
+        assert "it" in reason.lower() or "technical" in reason.lower()
+
+    def test_service_desk_engineer_boilerplate_customer_service_mention_does_not_rescue_it(self):
+        # Regression guard for the specific failure mode found during
+        # validation: real IT/helpdesk ads routinely mention "customer
+        # service" as a soft skill, so that phrase must not be usable to
+        # rescue a Service Desk *Engineer* title from exclusion.
+        posting = job(
+            "Service Desk Engineer",
+            "Timisoara",
+            "Excellent customer service and communication skills required. Troubleshoot "
+            "technical issues, manage the ticketing system, escalate to network engineering.",
+        )
+        keep, reason = hard_filter_job(posting, DEFAULT_PROFILE, TRACK_AHMED_OFFICE)
+        assert keep is False
+
+    def test_ordinary_service_desk_titles_without_engineer_are_unaffected(self):
+        for title in ("Service Desk Agent", "Service Desk Coordinator", "Help Desk Representative"):
+            posting = job(title, "Timisoara", "Customer service and administrative support for internal staff.")
+            keep, reason = hard_filter_job(posting, DEFAULT_PROFILE, TRACK_AHMED_OFFICE)
+            assert keep is True, f"{title!r} should not be affected by the Service Desk Engineer exclusion: {reason}"
+
+    def test_real_security_specialist_posting_is_rejected(self):
+        # Real posting text (Jobicy) that surfaced this false positive:
+        # scored 61/"low" and was visible on the office track before the fix.
+        posting = job(
+            "Security Specialist - EMEA (location flexible)",
+            "Remote",
+            "About ClickHouse: recognized on the 2025 Forbes Cloud 100 list, ClickHouse is "
+            "one of the most innovative and fast-growing private cloud companies, real-time "
+            "analytics, cybersecurity, AWS and Kubernetes infrastructure.",
+        )
+        keep, reason = hard_filter_job(posting, DEFAULT_PROFILE, TRACK_AHMED_OFFICE)
+        assert keep is False
+        assert "it" in reason.lower() or "technical" in reason.lower()
+
+    def test_security_specialist_is_not_globally_blocked(self):
+        # Requirement: security/compliance roles can be relevant to Ahmed, so
+        # a generic Security Specialist/Officer title with no IT/cloud
+        # evidence must remain visible.
+        posting = job(
+            "Security Compliance Officer",
+            "Timisoara",
+            "Ensure regulatory security compliance, internal audits, and physical access "
+            "control policies. English B2 required.",
+        )
+        keep, reason = hard_filter_job(posting, DEFAULT_PROFILE, TRACK_AHMED_OFFICE)
+        assert keep is True, reason
+
+    def test_security_specialist_with_cloud_evidence_is_rejected(self):
+        posting = job(
+            "Security Specialist",
+            "Timisoara",
+            "Own our cloud security posture across AWS and Kubernetes, cybersecurity "
+            "incident response, devops collaboration.",
+        )
+        keep, reason = hard_filter_job(posting, DEFAULT_PROFILE, TRACK_AHMED_OFFICE)
+        assert keep is False
+
+    def test_fix_is_track_independent_not_scoped_only_to_office(self):
+        # The hard-filter gate is track-independent by design (only the score
+        # threshold differs by track), so the same two titles must also be
+        # rejected on Full Career Scan / other non-IT tracks.
+        from careeros.tracks import TRACK_FINANCE
+
+        posting = job(
+            "Tier III Service Desk Engineer",
+            "Remote",
+            "Managed service provider delivering Managed IT Services. Tier 3 technical "
+            "support, troubleshooting, ticketing system, network engineering escalation.",
+        )
+        for track in (DEFAULT_TRACK, TRACK_FINANCE):
+            keep, _ = hard_filter_job(posting, DEFAULT_PROFILE, track)
+            assert keep is False
+
+    def test_logistics_track_unaffected(self):
+        # Requirement 8: Logistics & Production behavior must not change.
+        posting = job(
+            "Production Operator",
+            "Timisoara",
+            "Operate production line machinery, injection molding, quality control checks "
+            "on the assembly line.",
+            "4500 RON",
+        )
+        keep, reason = hard_filter_job(posting, DEFAULT_PROFILE, TRACK_LOGISTICS)
+        assert keep is True, reason
+        result = calculate_match(posting, DEFAULT_PROFILE, track=TRACK_LOGISTICS)
+        assert result.dimensions["skills"] >= 25
+
+    def test_previously_validated_office_ranking_improvements_still_hold(self):
+        # Requirement 9: keep the existing Ahmed Office ranking improvements
+        # found during validation (real posting text, abbreviated).
+        # Full real posting text (PORR AG, via Hipo) that surfaced this
+        # improvement during validation — kept verbatim so the skill-keyword
+        # hits (e.g. "Excel" in the PC-skills line) reproduce exactly.
+        contract_manager = job(
+            "Contract Manager Senior",
+            "Timisoara",
+            "Responsabilitățile tale Analizarea prevederilor contractului și identificarea "
+            "livrabilelor cu respectarea termenelor contractuale, pentru identificarea "
+            "riscurilor din perspectivă tehnică și juridică pe care le pot implica drepturile "
+            "și obligațiile părților Gestionarea contractelor principale și oferirea "
+            "suportului în administrarea contractelor de subcontractare/ furnizare/prestări "
+            "servicii atât în faza de întocmire a ofertelor, cât și în faza executării "
+            "contractului Informarea Managementului de Proiect cu privire la stadiul "
+            "proiectului prin raportare la termenele contractuale, monitorizarea lucrărilor "
+            "din perspectiva obligațiilor contractuale și a îndeplinirii punctelor de "
+            "referință, inclusiv cu privire la potențiale modificări/revendicări/ riscuri de "
+            "penalități și încălcări ale contractului Gestionarea, analizarea și menținerea "
+            "la zi a corespondenței contractuale, oferirea de consultanță echipei de proiect "
+            "în ceea ce privește obligațiile contractuale și riscurile identificate, precum și "
+            "furnizarea de metode de soluționare a eventualelor probleme identificate "
+            "Redactarea corespondenței către beneficiari, consultanți, subantreprenori, "
+            "prestatori și/sau furnizori, conform prevederilor contractului Colaborarea cu "
+            "Plannerii și Managementul de Proiect pentru analizarea întârzierilor înregistrate "
+            "în finalizarea proiectelor și identificarea unor măsuri de remediere din punct de "
+            "vedere contractual, pentru pregătirea strategiei contractuale Evaluarea "
+            "riscurilor contractuale, pregătirea și redactarea notificărilor de revendicare, "
+            "precum și a fundamentării revendicărilor, inclusiv în ceea ce privește "
+            "prelungirea duratei de execuție și cuantificarea costurilor suplimentare Oferirea "
+            "de asistență contractuală echipelor de proiect pentru rezolvarea situațiilor "
+            "apărute în relațiile lor cu managementul autorităților contractante/ "
+            "beneficiarilor/ partenerilor comerciali Elaborarea propunerilor de modificare "
+            "aferente lucrărilor suplimentare sau optimizărilor aduse proiectului Oferirea "
+            "unei viziuni contractuale ușor de înțeles asupra aspectelor privind angajamentele "
+            "companiei față de beneficiari, parteneri și principalii subantreprenori și "
+            "furnizori Competențele tale Studii superioare finalizate (domeniu – "
+            "Construcții/Drept) Minimum 10 ani experiență într-o poziție similară în domeniul "
+            "construcțiilor Cunoștințe și experiență în cadrul proiectelor desfășurate cu "
+            "respectarea legislației relevante în domeniul achizițiilor publice sau proiecte "
+            "în cadrul cărora au fost folosite formele contractuale de tip HG1 și contracte "
+            "comerciale între privați Abilități excelente de comunicare scrisă și orală "
+            "Abilități de planificare, organizare, prezentare Cunoștințe de limba engleză - "
+            "nivel mediu Cunoștințe bune operare PC (Excel, Word, PowerPoint) Beneficiile tale "
+            "Abonament privat de servicii medicale Oferte personalizate - 7card; Bookster; "
+            "Parteneriate bancare PORR Academy - academie internă pentru cursuri de pregătire "
+            "Programe pentru dezvoltarea personală și profesională Te așteptăm în echipa "
+            "noastră pentru a construi împreună!",
+        )
+        assert calculate_match(contract_manager, DEFAULT_PROFILE, track=TRACK_AHMED_OFFICE).score >= 55
+
+        compliance_officer = job(
+            "Compliance Officer EMEA (m/f/d)",
+            "Timisoara",
+            "Compliance, regulatory, English required. Romanian is a plus.",
+        )
+        full_score = calculate_match(compliance_officer, DEFAULT_PROFILE, track=DEFAULT_TRACK).score
+        office_score = calculate_match(compliance_officer, DEFAULT_PROFILE, track=TRACK_AHMED_OFFICE).score
+        assert office_score >= full_score

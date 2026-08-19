@@ -21,11 +21,11 @@ def _engine_version() -> str:
 __engine_version__ = _engine_version()
 
 from .profile import DEFAULT_PROFILE, Profile
-from .text import normalize_text
+from .text import contains_any, normalize_text
 from . import matching as _matching
 from .matching import MatchResult, calculate_match as _calculate_match_v4, hard_filter_job as _hard_filter_job_v4, priority_band
 from .matching import blend_scores
-from .role_intelligence import wrap_matching
+from .role_intelligence import IT_STRONG, wrap_matching
 from .quality import calibrate_result, deduplicate_display_jobs
 from .ranking_calibration import calibrate_ahmed_ranking
 
@@ -90,7 +90,33 @@ _TECHNICAL_TITLE_BLOCKS = (
     "dynamics 365 developer", "dynamics 365 consultant",
     "iam engineer", "identity and access management", "identity & access management",
     "access management engineer",
+    # "Service Desk Engineer" reads as IT infrastructure/technical support by
+    # default — the "engineer" suffix is what makes it specifically technical,
+    # unlike a genuine customer-facing "service desk" role (help-desk agent,
+    # service desk coordinator/administrator), which uses different wording
+    # and never collides with this precise phrase. A body-text "non-IT
+    # evidence" override was tried and rejected: real IT/helpdesk job ads
+    # routinely list "customer service" as a soft skill, which defeated the
+    # override on the exact posting this phrase exists to catch.
+    "service desk engineer",
 )
+
+# "Security Specialist" / "Security Officer" must NOT be globally blocked —
+# security/compliance work (e.g. trade compliance, regulatory security) is
+# relevant to Ahmed's background. Exclude only when the posting itself shows
+# strong cloud/IT-infrastructure evidence (role_intelligence.IT_STRONG),
+# i.e. a cybersecurity engineering role wearing a generic title, not a
+# compliance/security-officer role.
+_AMBIGUOUS_SECURITY_TITLES = ("security specialist", "security officer")
+
+
+def _is_ambiguous_it_title_excluded(job) -> bool:
+    title = normalize_text(str(job.get("title") or ""))
+    desc = normalize_text(str(job.get("description") or ""))
+    full = f"{title} {desc}"
+    if contains_any(title, _AMBIGUOUS_SECURITY_TITLES):
+        return contains_any(full, IT_STRONG)
+    return False
 
 _AHMED_HEAVY_TITLE_RE = re.compile(
     r"\b(?:c\s*[＋+&/]\s*e|c\s*e\b|categoria\s+c(?:e|\+e)?|category\s+c(?:e|\+e)?|cat\.?\s*c(?:e|\+e)?|"
@@ -159,6 +185,8 @@ def hard_filter_job(job, profile, track=""):
     title = str(job.get("title") or "").lower()
     if any(phrase in title for phrase in _TECHNICAL_TITLE_BLOCKS) and "it" not in str(track or "").lower():
         return False, "🔴 Technical IT role outside the documented career track"
+    if "it" not in str(track or "").lower() and _is_ambiguous_it_title_excluded(job):
+        return False, "🔴 Technical IT/infrastructure role — outside the documented career track"
     keep, reason = _base_hard_filter(job, profile, track)
     if keep:
         return True, ""
