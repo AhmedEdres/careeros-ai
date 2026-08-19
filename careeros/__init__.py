@@ -82,6 +82,14 @@ _TECHNICAL_TITLE_BLOCKS = (
     "network engineer", "network administrator", "cyber security", "cybersecurity",
     "security engineer", "data scientist", "machine learning engineer", "it governance",
     "it infrastructure", "systems engineer", "system administrator", "database administrator",
+    # Microsoft 365 / enterprise-platform IT specialists — Ahmed's profile lists
+    # SharePoint/Dynamics as tools he uses in finance/ops work, not systems he
+    # administers or builds on, so these must not inherit that skill credit.
+    "power platform", "copilot", "m365", "microsoft 365", "collaboration specialist",
+    "collaboration engineer", "sharepoint administrator", "sharepoint developer",
+    "dynamics 365 developer", "dynamics 365 consultant",
+    "iam engineer", "identity and access management", "identity & access management",
+    "access management engineer",
 )
 
 _AHMED_HEAVY_TITLE_RE = re.compile(
