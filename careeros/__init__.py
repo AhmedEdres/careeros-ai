@@ -151,10 +151,18 @@ def _title_foreign_market(job) -> str:
     if isinstance(loc, dict):
         loc = loc.get("display_name", "")
     text = f"{title} {str(loc).lower()}"
+    matches = []
     for phrase, market in sorted(_FOREIGN_TITLE_MARKETS.items(), key=lambda x: len(x[0]), reverse=True):
-        if re.search(rf"(?<![a-z]){re.escape(phrase)}(?![a-z])", text):
-            return market
-    return ""
+        if re.search(rf"(?<![a-z]){re.escape(phrase)}(?![a-z])", text) and market not in matches:
+            matches.append(market)
+    if not matches:
+        return ""
+    # "EMEA" unambiguously includes Romania — one country named alongside it
+    # (e.g. "Remote — EMEA, Germany") is an anchor/HQ mention, not an
+    # exclusive restriction. Same carve-out as matching.foreign_labour_market.
+    if len(matches) == 1 and re.search(r"(?<![a-z])emea(?![a-z])", text):
+        return ""
+    return matches[0]
 
 
 def _base_calculate_match(job, profile, track=""):

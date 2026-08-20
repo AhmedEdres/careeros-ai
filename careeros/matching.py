@@ -484,6 +484,15 @@ def foreign_labour_market(location_text: str, title: str = "", description: str 
 
     named = _countries_named_in(loc)
     if named:
+        # "EMEA" is an explicit multi-country super-region that unambiguously
+        # includes Romania — unlike bare "Europe"/"EU", which the codebase
+        # deliberately still treats as restrictive when paired with one named
+        # country (e.g. "Remote — Europe, Netherlands" stays Dutch-market).
+        # A single country named alongside "EMEA" (e.g. "Remote — EMEA,
+        # Germany") is almost always an anchor/HQ mention, not an exclusive
+        # restriction, so EMEA wins there.
+        if len(named) == 1 and contains_phrase(loc, "emea"):
+            return None
         return named[0] if not _is_home_location(title_n) else None
 
     if _is_home_location(loc):
@@ -539,7 +548,12 @@ def classify_remote_geography(location_text: str, description_text: str) -> str:
     ]
     if not single_country:
         single_country = [country for country in _EXTRA_FOREIGN_MARKETS if contains_phrase(loc, country)]
-    if single_country:
+    # "EMEA" is a broader, unambiguous-Romania-inclusive super-region, unlike
+    # bare "Europe"/"EU" — see foreign_labour_market's matching carve-out.
+    # One country named alongside "EMEA" (e.g. "Remote — EMEA, Germany") does
+    # not override it; falls through to the open-region check below.
+    emea_named = contains_phrase(loc, "emea")
+    if single_country and not (len(single_country) == 1 and emea_named):
         return "remote_unclear"
 
     # "Remote — Europe/EU/EEA/worldwide" is real EU-wide eligibility.
