@@ -47,6 +47,10 @@ _HIPO_CITY_RE = re.compile(
 )
 _HIPO_DATE_RE = re.compile(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{4}\b")
 _HIPO_HEADING_RE = re.compile(r"\s+Jobs from Hipo.*$", re.IGNORECASE)
+_HIPO_EMPLOYER_MARKER_RE = re.compile(r"Employer:\s*\S")
+_HIPO_RELATED_JOBS_MARKER_RE = re.compile(
+    r"Job-uri similare care te-ar putea interesa|Locuri de munca similare", re.IGNORECASE
+)
 
 
 def _display_name(value) -> str:
@@ -102,6 +106,44 @@ def _clean_salary(job: Dict) -> str:
     return raw if parse_salary(raw).has_value else ""
 
 
+def _clean_description(job: Dict) -> str:
+    """Strip Hipo's page navigation and "related jobs" boilerplate.
+
+    Some Hipo scrapes capture the whole page rather than just the posting:
+    roughly 2500 characters of site navigation and a rotating "Company News"
+    sidebar widget, prepended before the actual structured job content, and
+    a "Job-uri similare care te-ar putea interesa" (related jobs) block plus
+    site footer appended after it. That real content reliably starts at
+    "Employer:" (Hipo's own metadata line, with the job title repeated
+    immediately before it) and ends where the related-jobs block begins.
+    This boilerplate is strong enough on its own to make role_intelligence
+    misclassify the posting — an incidental "recruiter" mention in a news
+    blurb, or an unrelated "HR Business Partner" job named in the related-
+    jobs suggestions, can tip an unrelated role into the "HR" family and
+    hard-reject it. Descriptions without the "Employer:" marker (already
+    clean/short, or a Hipo promo/event page rather than a real job) are
+    left untouched — the leading-boilerplate case is what makes those
+    reliably identifiable, so no separate check is needed for the trailer
+    alone.
+    """
+    desc = str(job.get("description", "") or "")
+    match = _HIPO_EMPLOYER_MARKER_RE.search(desc)
+    if not match:
+        return desc
+    title = str(job.get("title", "") or "")
+    start = desc.rfind(title, 0, match.start()) if title else -1
+    if start == -1:
+        # Title text didn't line up exactly — fall back to a small look-back
+        # so the repeated-title line right before "Employer:" is still kept
+        # where possible, rather than losing it entirely.
+        start = max(0, match.start() - 120)
+    body = desc[start:]
+    end_match = _HIPO_RELATED_JOBS_MARKER_RE.search(body)
+    if end_match:
+        body = body[: end_match.start()]
+    return body.strip()
+
+
 def _normalise_hipo_job(job: Dict) -> Dict:
     cleaned = dict(job)
     cleaned["title"] = _clean_title(str(cleaned.get("title", "") or ""))
@@ -112,6 +154,7 @@ def _normalise_hipo_job(job: Dict) -> Dict:
         cleaned["salary_min"] = None
         cleaned["salary_max"] = None
         cleaned["salary_currency"] = None
+    cleaned["description"] = _clean_description(cleaned)
     return cleaned
 
 
