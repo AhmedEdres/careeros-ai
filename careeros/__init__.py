@@ -6,7 +6,7 @@ import hashlib
 import re
 from pathlib import Path
 
-__version__ = "4.3.10"
+__version__ = "4.3.11"
 
 def _engine_version() -> str:
     digest = hashlib.md5()
@@ -105,6 +105,22 @@ _TECHNICAL_TITLE_BLOCKS = (
     # inflate the skills match even though the function itself — designing
     # data systems — is not evidenced anywhere in Ahmed's profile.
     "data architect",
+    # Skilled trades / hands-on technical engineering: these require
+    # certifications and physical/technical skills nowhere in Ahmed's
+    # profile. They pass through role_intelligence's classifier as
+    # unrecognised ("general") family rather than being hard-rejected,
+    # because their descriptions incidentally use ops/compliance words
+    # ("coordination", "reporting", "customer") that inflate the skills
+    # dimension despite the job itself being a different career entirely.
+    "hvac engineer", "hvac technician", "refrigeration engineer", "refrigeration technician",
+    "electrician", "electrical engineer", "electrical technician",
+    "mechanical engineer", "civil engineer", "structural engineer",
+    "security systems specialist", "security systems engineer", "security systems technician",
+    "field service engineer", "field service technician", "field technician",
+    "maintenance technician", "maintenance engineer",
+    "automation engineer", "controls engineer", "instrumentation engineer",
+    "plumber", "plumbing technician", "welder", "welding engineer",
+    "it technician", "it support technician", "help desk technician",
 )
 
 # "Security Specialist" / "Security Officer" must NOT be globally blocked —
