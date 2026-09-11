@@ -209,10 +209,69 @@ def _language_in_required_bundle(text: str, lang: str) -> bool:
     return False
 
 
+# RO job boards (eJobs, BestJobs, Hipo) state language requirements in
+# Romanian, not English — "Lb Germana", "cunostinte de germana", "vorbitor
+# de franceza". profile.other_languages only lists English names, so
+# classify_language_mention silently found nothing on RO-language postings
+# and the hard language exclusion never fired. These are the Romanian noun
+# forms (post normalize_text, so diacritics already stripped: germana, not
+# germană) for every language in Profile.other_languages.
+_RO_LANGUAGE_NAMES: Dict[str, Tuple[str, ...]] = {
+    "french": ("franceza",),
+    "german": ("germana",),
+    "dutch": ("olandeza", "neerlandeza"),
+    "italian": ("italiana",),
+    "spanish": ("spaniola",),
+    "portuguese": ("portugheza",),
+    "polish": ("poloneza",),
+    "czech": ("ceha",),
+    "hungarian": ("maghiara", "ungara"),
+    "greek": ("greaca",),
+    "turkish": ("turca",),
+    "russian": ("rusa",),
+    "swedish": ("suedeza",),
+    "norwegian": ("norvegiana",),
+    "danish": ("daneza",),
+    "finnish": ("finlandeza",),
+    "hebrew": ("ebraica",),
+    "chinese": ("chineza", "mandarina"),
+    "japanese": ("japoneza",),
+    "korean": ("coreeana",),
+    "bulgarian": ("bulgara",),
+    "serbian": ("serba",),
+    "croatian": ("croata",),
+    "ukrainian": ("ucraineana",),
+}
+
+# Romanian-language equivalents of the English requirement/plus idioms above.
+_RO_REQUIRED_MARKERS = (
+    "obligatorie", "obligatoriu", "necesara", "necesar", "solicitata", "solicitat",
+    "ceruta", "cerut", "fluent", "fluenta", "nativ", "nativa", "vorbitor de",
+    "vorbitoare de", "avansat", "avansata", "nivel avansat",
+)
+_RO_PLUS_MARKERS = (
+    "un plus", "un avantaj", "reprezinta un avantaj", "constituie un avantaj",
+    "cunostinte de", "cunostinte medii", "nivel mediu", "nivel mediu-avansat",
+)
+
+
+def _classify_ro_language_mention(text: str, ro_names: Tuple[str, ...]) -> str:
+    if not any(contains_phrase(text, name) for name in ro_names):
+        return "none"
+    if contains_any(text, _RO_PLUS_MARKERS):
+        return "plus"
+    if contains_any(text, _RO_REQUIRED_MARKERS):
+        return "required"
+    return "mentioned"
+
+
 def classify_language_mention(text: str, lang: str) -> str:
     """Classify how a language appears: required / preferred / plus / mentioned / none."""
     lang = normalize_text(lang)
     if not contains_phrase(text, lang):
+        ro_names = _RO_LANGUAGE_NAMES.get(lang)
+        if ro_names:
+            return _classify_ro_language_mention(text, ro_names)
         return "none"
 
     required = [
