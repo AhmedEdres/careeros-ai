@@ -48,6 +48,15 @@ _PERIOD_MULTIPLIERS = {
     "year": 1 / 12,
 }
 
+# No real full-time job in Romania pays below this per month (Romania's gross
+# minimum wage is ~4,050 RON as of 2026; we stay conservative for part-time
+# ads). A figure that converts to less than this after period normalisation
+# — e.g. a scraped "2700 RON/year" — is almost always a data artefact (a
+# benefit/voucher amount, a mis-tagged period, or noise), never a real salary.
+# Such figures must not surface as "well below target": they are unreliable,
+# not evidence, so they are dropped entirely rather than used for ranking.
+_PLAUSIBLE_MONTHLY_RON_FLOOR = 1000.0
+
 _PERIOD_PATTERNS = [
     (r"\b(per|an|a|/)\s*(hour|hr|h)\b|\bhourly\b|/\s*h\b|\bpe\s+ora\b", "hour"),
     (r"\b(per|a|/)\s*day\b|\bdaily\b|\bpe\s+zi\b", "day"),
@@ -223,6 +232,15 @@ def parse_salary(
 
     monthly_min = to_monthly_ron(min_amount, currency, period)
     monthly_max = to_monthly_ron(max_amount, currency, period) if max_amount else None
+
+    # Plausibility floor: a resulting monthly figure below what any real
+    # full-time job pays is not trustworthy salary data. Keep the raw text
+    # and detected currency/period for display, but drop the numeric amounts
+    # so downstream scoring treats it as "not specified" rather than "well
+    # below target" — an implausible number is not evidence.
+    floor = _PLAUSIBLE_MONTHLY_RON_FLOOR
+    if (monthly_min is not None and monthly_min < floor) or (monthly_max is not None and monthly_max < floor):
+        return SalaryInfo(raw=raw, currency=currency, period=period)
 
     return SalaryInfo(
         raw=raw,
